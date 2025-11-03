@@ -104,8 +104,9 @@ mongoose.connect(config.MONGODB_URI)
   .then(() => {
     logger.info('Connected to MongoDB');
     const PORT = config.PORT || 3030;
-    app.listen(PORT, () => {
-      logger.info(`Server is running on port ${PORT}`);
+    const HOST = process.env.HOST || '0.0.0.0'; // Railway requires 0.0.0.0
+    app.listen(PORT, HOST, () => {
+      logger.info(`Server is running on ${HOST}:${PORT}`);
     });
 
     // Cron job to delete unverified users is DISABLED
