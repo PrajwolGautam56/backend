@@ -25,6 +25,13 @@ export const config = {
   CLOUDINARY_API_SECRET: getEnv('CLOUDINARY_API_SECRET'),
   NODEMAILER_PASSWORD: getOptionalEnv('NODEMAILER_PASSWORD'),
   NODEMAILER_EMAIL: getOptionalEnv('NODEMAILER_EMAIL'),
+  GOOGLE_MAPS_API_KEY: getOptionalEnv('GOOGLE_MAPS_API_KEY'),
+  FRONTEND_BASE_URL: getOptionalEnv('FRONTEND_BASE_URL') || 'http://localhost:3000',
+  // Razorpay configuration
+  RAZORPAY_KEY_ID: getOptionalEnv('RAZORPAY_KEY_ID'),
+  RAZORPAY_KEY_SECRET: getOptionalEnv('RAZORPAY_KEY_SECRET'),
+  RAZORPAY_WEBHOOK_SECRET: getOptionalEnv('RAZORPAY_WEBHOOK_SECRET'),
   isGoogleAuthEnabled: () => !!process.env.GOOGLE_CLIENT_ID,
-  isEmailEnabled: () => !!process.env.NODEMAILER_EMAIL && !!process.env.NODEMAILER_PASSWORD
+  isEmailEnabled: () => !!process.env.NODEMAILER_EMAIL && !!process.env.NODEMAILER_PASSWORD,
+  isRazorpayEnabled: () => !!process.env.RAZORPAY_KEY_ID && !!process.env.RAZORPAY_KEY_SECRET
 };

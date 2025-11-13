@@ -5,7 +5,8 @@ import {
   getFurnitureFormById,
   updateFurnitureForm, 
   updateFurnitureFormStatus,
-  deleteFurnitureForm 
+  deleteFurnitureForm,
+  migrateDeliveredRentals
 } from '../controllers/furnitureFormController';
 import { authenticateToken } from '../middleware/auth';
 import { optionalAuthenticate } from '../middleware/optionalAuth';
@@ -18,9 +19,10 @@ router.post('/', optionalAuthenticate, createFurnitureForm); // Create a furnitu
 
 // Admin routes - Manage furniture requests
 router.get('/', authenticateToken, isAdmin, getFurnitureForms); // List all requests with filters
+router.post('/migrate-delivered-rentals', authenticateToken, isAdmin, migrateDeliveredRentals); // Migrate existing delivered rentals to rental management
+router.patch('/:id/status', authenticateToken, isAdmin, updateFurnitureFormStatus); // Update status (must be before /:id route)
 router.get('/:id', authenticateToken, isAdmin, getFurnitureFormById); // Get single request
 router.put('/:id', authenticateToken, isAdmin, updateFurnitureForm); // Update request
-router.patch('/:id/status', authenticateToken, isAdmin, updateFurnitureFormStatus); // Update status
 router.delete('/:id', authenticateToken, isAdmin, deleteFurnitureForm); // Delete request
 
 export default router;

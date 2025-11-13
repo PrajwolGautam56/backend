@@ -4,6 +4,10 @@ import { AuthRequest } from '../interfaces/Request';
 import Property from '../models/Property';
 import User from '../models/User';
 import logger from '../utils/logger';
+import { 
+  sendPropertyRequestConfirmation,
+  sendPropertyStatusUpdate 
+} from '../utils/email';
 
 // Create a new property form entry
 export const createPropertyForm = async (req: AuthRequest, res: Response) => {
@@ -80,6 +84,13 @@ export const createPropertyForm = async (req: AuthRequest, res: Response) => {
         }
       });
       logger.info('User activity tracked', { userId: req.userId, action: 'property_request' });
+    }
+
+    // Send notification email (if configured)
+    try {
+      await sendPropertyRequestConfirmation(propertyForm, property);
+    } catch (emailError) {
+      logger.warn('Failed to send email notification', { error: emailError });
     }
 
     logger.info('Property request created', { propertyFormId: propertyForm._id });
@@ -204,6 +215,15 @@ export const updatePropertyFormStatus = async (req: AuthRequest, res: Response) 
       { status }, 
       { new: true }
     ).populate('userId', 'fullName email');
+
+    // Send status update email
+    if (propertyForm && propertyForm.email) {
+      try {
+        await sendPropertyStatusUpdate(propertyForm, status);
+      } catch (emailError) {
+        logger.warn('Failed to send status update email', { error: emailError });
+      }
+    }
 
     // Track admin activity
     if (req.userId) {

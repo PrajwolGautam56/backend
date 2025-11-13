@@ -18,7 +18,19 @@ export const getFurniture = async (req: Request, res: Response) => {
       query.category = req.query.category;
     }
     if (req.query.listingType && ['Rent', 'Sell', 'Rent & Sell'].includes(req.query.listingType as string)) {
-      query.listing_type = req.query.listingType;
+      const listingType = req.query.listingType as string;
+      // If filtering for "Rent", include both "Rent" and "Rent & Sell" items
+      if (listingType === 'Rent') {
+        query.listing_type = { $in: ['Rent', 'Rent & Sell'] };
+      }
+      // If filtering for "Sell", include both "Sell" and "Rent & Sell" items
+      else if (listingType === 'Sell') {
+        query.listing_type = { $in: ['Sell', 'Rent & Sell'] };
+      }
+      // If filtering for "Rent & Sell", exact match
+      else {
+        query.listing_type = listingType;
+      }
     }
     if (req.query.condition && ['New', 'Like New', 'Good', 'Fair', 'Needs Repair'].includes(req.query.condition as string)) {
       query.condition = req.query.condition;
@@ -78,6 +90,65 @@ export const getFurnitureById = async (req: Request, res: Response) => {
   }
 };
 
+// Helper function to parse features field (handles string, array, or JSON string)
+const parseFeatures = (features: any): string[] => {
+  if (!features) return [];
+  
+  // If already an array, return it (clean it up)
+  if (Array.isArray(features)) {
+    return features
+      .map(f => {
+        // If element is a string, use it; if it's an array, extract strings from it
+        if (typeof f === 'string') return f.trim();
+        if (Array.isArray(f)) return f.filter(item => typeof item === 'string').map(item => item.trim()).join(', ');
+        return String(f).trim();
+      })
+      .filter(f => f.length > 0);
+  }
+  
+  // If it's a string, try to parse it
+  if (typeof features === 'string') {
+    // Try parsing as JSON (may be double-encoded)
+    let parsed: any = features;
+    let maxAttempts = 5; // Prevent infinite loops
+    while (maxAttempts > 0 && typeof parsed === 'string') {
+      try {
+        const attempt = JSON.parse(parsed);
+        if (Array.isArray(attempt)) {
+          parsed = attempt;
+          break;
+        } else if (typeof attempt === 'string') {
+          parsed = attempt;
+          maxAttempts--;
+        } else {
+          break;
+        }
+      } catch (e) {
+        // Not JSON, treat as comma-separated string
+        break;
+      }
+    }
+    
+    // If we ended up with an array, process it
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(f => {
+          if (typeof f === 'string') return f.trim();
+          if (Array.isArray(f)) return f.filter(item => typeof item === 'string').map(item => item.trim()).join(', ');
+          return String(f).trim();
+        })
+        .filter(f => f.length > 0);
+    }
+    
+    // If still a string, treat as comma-separated
+    if (typeof parsed === 'string') {
+      return parsed.split(',').map(f => f.trim()).filter(f => f.length > 0);
+    }
+  }
+  
+  return [];
+};
+
 // Helper function to upload to Cloudinary
 const uploadToCloudinary = async (file: Express.Multer.File, itemName: string, index: number) => {
   try {
@@ -130,7 +201,7 @@ export const addFurniture = async (req: AuthRequest, res: Response) => {
       listing_type: req.body.listing_type,
       price: req.body.price,
       photos: photoUrls,
-      features: req.body.features,
+      features: parseFeatures(req.body.features),
       dimensions: req.body.dimensions,
       location: req.body.location,
       delivery_available: req.body.delivery_available || false,
@@ -188,6 +259,11 @@ export const updateFurniture = async (req: AuthRequest, res: Response) => {
       ...req.body,
       photos: photoUrls
     };
+
+    // Parse features if provided
+    if (req.body.features !== undefined) {
+      updateData.features = parseFeatures(req.body.features);
+    }
 
     if (req.body.address) {
       updateData.address = {

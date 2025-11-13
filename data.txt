@@ -35,4 +35,15 @@
    - Location: Created automatically in project root
    - Ensure write permissions are available
 
+6. Email Service (Nodemailer) - Optional:
+   - Environment Variables: NODEMAILER_EMAIL, NODEMAILER_PASSWORD
+   - Location: Add in .env file
+   - Email: brokerin.in@gmail.com
+   - App Password: weqtzipbgmbpfmit (no spaces)
+   - Example: 
+     NODEMAILER_EMAIL=brokerin.in@gmail.com
+     NODEMAILER_PASSWORD=weqtzipbgmbpfmit
+   - Used for: Rental reminders, payment confirmations, booking notifications
+   - Note: If not configured, system works but emails won't be sent
+
 Note: Create a .env file in the root directory with these configurations. Never commit .env file to version control.

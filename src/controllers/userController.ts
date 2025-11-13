@@ -7,6 +7,7 @@ import ServiceBooking from '../models/ServiceBooking';
 import Contact from '../models/Contact';
 import Property from '../models/Property';
 import Furniture from '../models/Furniture';
+import Rental from '../models/Rental';
 import mongoose from 'mongoose';
 import logger from '../utils/logger';
 
@@ -235,8 +236,8 @@ export const getOwnDashboard = async (req: AuthRequest, res: Response) => {
     }
 
     // Get user's all submissions by userId OR email
-    // Service bookings, furniture requests, and contact inquiries can be matched by userId OR user's email
-    const [propertyRequests, furnitureRequests, serviceBookings, contactInquiries] = await Promise.all([
+    // Service bookings, furniture requests, contact inquiries, and rentals can be matched by userId OR user's email
+    const [propertyRequests, furnitureRequests, serviceBookings, contactInquiries, rentals] = await Promise.all([
       PropertyForm.find({ userId })
         .sort({ createdAt: -1 })
         .lean(),
@@ -266,6 +267,15 @@ export const getOwnDashboard = async (req: AuthRequest, res: Response) => {
         ]
       })
         .sort({ created_at: -1 })
+        .lean(),
+      // Match rentals by userId OR email (case-insensitive)
+      Rental.find({
+        $or: [
+          { userId: userId },
+          { customer_email: { $regex: new RegExp(`^${user.email}$`, 'i') } } // Case-insensitive email match
+        ]
+      })
+        .sort({ createdAt: -1 })
         .lean()
     ]);
 
@@ -276,7 +286,8 @@ export const getOwnDashboard = async (req: AuthRequest, res: Response) => {
       propertyRequestsCount: propertyRequests.length,
       furnitureRequestsCount: furnitureRequests.length,
       serviceBookingsCount: serviceBookings.length,
-      contactInquiriesCount: contactInquiries.length
+      contactInquiriesCount: contactInquiries.length,
+      rentalsCount: rentals.length
     });
 
     // Fetch property and furniture details separately (since IDs are strings)
@@ -379,6 +390,24 @@ export const getOwnDashboard = async (req: AuthRequest, res: Response) => {
       updated_at: inquiry.updated_at
     });
 
+    const formatRental = (rental: any) => ({
+      _id: rental._id,
+      rental_id: rental.rental_id,
+      customer_name: rental.customer_name,
+      customer_email: rental.customer_email,
+      customer_phone: rental.customer_phone,
+      items: rental.items,
+      total_monthly_amount: rental.total_monthly_amount,
+      total_deposit: rental.total_deposit,
+      start_date: rental.start_date,
+      end_date: rental.end_date,
+      status: rental.status,
+      payment_records: rental.payment_records || [],
+      notes: rental.notes,
+      createdAt: rental.createdAt,
+      updatedAt: rental.updatedAt
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -396,19 +425,23 @@ export const getOwnDashboard = async (req: AuthRequest, res: Response) => {
           totalFurnitureRequests: furnitureRequests.length,
           totalServiceBookings: serviceBookings.length,
           totalContactInquiries: contactInquiries.length,
+          totalRentals: rentals.length,
+          activeRentals: rentals.filter((r: any) => r.status === 'Active').length,
           totalActivities: user?.activityLog?.length || 0,
-          totalSubmissions: propertyRequests.length + furnitureRequests.length + serviceBookings.length + contactInquiries.length
+          totalSubmissions: propertyRequests.length + furnitureRequests.length + serviceBookings.length + contactInquiries.length + rentals.length
         },
         recentPropertyRequests: propertyRequests.slice(0, 5).map(formatPropertyRequest),
         recentFurnitureRequests: furnitureRequests.slice(0, 5).map(formatFurnitureRequest),
         recentServiceBookings: serviceBookings.slice(0, 5).map(formatServiceBooking),
         recentContactInquiries: contactInquiries.slice(0, 5).map(formatContactInquiry),
+        recentRentals: rentals.slice(0, 5).map(formatRental),
         activityLog: user?.activityLog?.slice(0, 10) || [],
         // Full lists (optional - can be moved to separate endpoints if needed)
         allPropertyRequests: propertyRequests.map(formatPropertyRequest),
         allFurnitureRequests: furnitureRequests.map(formatFurnitureRequest),
         allServiceBookings: serviceBookings.map(formatServiceBooking),
-        allContactInquiries: contactInquiries.map(formatContactInquiry)
+        allContactInquiries: contactInquiries.map(formatContactInquiry),
+        allRentals: rentals.map(formatRental)
       }
     });
   } catch (error) {

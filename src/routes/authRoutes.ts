@@ -105,6 +105,9 @@ const router: Router = express.Router();
  *               $ref: '#/components/schemas/Error'
  */
 router.post('/signup', upload.single('profilePicture'), authController.signup as express.RequestHandler);
+// New pre-verification routes
+router.post('/pre-signup/request-otp', authController.requestSignupOtp as express.RequestHandler);
+router.post('/pre-signup/verify-otp', authController.verifySignupOtp as express.RequestHandler);
 
 /**
  * @swagger
@@ -153,6 +156,11 @@ router.post('/signup', upload.single('profilePicture'), authController.signup as
  *                       type: string
  */
 router.post('/signin', authController.signin as express.RequestHandler);
+
+// Forgot password routes
+router.post('/forgot-password', authController.requestPasswordReset as express.RequestHandler);
+router.post('/reset-password/verify', authController.verifyPasswordResetToken as express.RequestHandler);
+router.post('/reset-password', authController.resetPassword as express.RequestHandler);
 
 /**
  * @swagger

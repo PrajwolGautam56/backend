@@ -9,6 +9,7 @@ import fs from 'fs';
 import mongoose, { Schema } from 'mongoose'; // Ensure mongoose is imported
 import cloudinary from '../utils/cloudinary';
 import { config } from '../config/config';
+import { geocodeAddress } from '../utils/geocoding';
 
 // Public endpoints
 export const getProperties = async (req: Request, res: Response) => {
@@ -189,6 +190,26 @@ export const addProperty = async (req: AuthRequest, res: Response) => {
     if (req.body.location_coordinates) propertyData.location_coordinates = req.body.location_coordinates;
     if (req.body.address) propertyData.address = req.body.address;
     
+    // Auto-geocode address if coordinates are not provided but address is available
+    if (!propertyData.location_coordinates && (propertyData.address || propertyData.location)) {
+      try {
+        const geocodeResult = await geocodeAddress(
+          propertyData.address || {},
+          propertyData.location
+        );
+        if (geocodeResult) {
+          propertyData.location_coordinates = {
+            latitude: geocodeResult.latitude,
+            longitude: geocodeResult.longitude
+          };
+          logger.info('Auto-geocoded address:', geocodeResult);
+        }
+      } catch (error) {
+        logger.warn('Failed to auto-geocode address (frontend can handle this):', error);
+        // Don't fail property creation if geocoding fails
+      }
+    }
+    
     // Always include photos if uploaded
     if (photoUrls.length > 0) {
       propertyData.photos = photoUrls;
@@ -294,6 +315,26 @@ export const updateProperty = async (req: AuthRequest, res: Response) => {
         ...existingProperty.address,
         ...req.body.address
       };
+    }
+
+    // Auto-geocode address if coordinates are not provided but address is updated
+    if (!updateData.location_coordinates && (updateData.address || req.body.location)) {
+      try {
+        const geocodeResult = await geocodeAddress(
+          updateData.address || existingProperty.address || {},
+          req.body.location || existingProperty.location
+        );
+        if (geocodeResult) {
+          updateData.location_coordinates = {
+            latitude: geocodeResult.latitude,
+            longitude: geocodeResult.longitude
+          };
+          logger.info('Auto-geocoded address on update:', geocodeResult);
+        }
+      } catch (error) {
+        logger.warn('Failed to auto-geocode address on update (frontend can handle this):', error);
+        // Don't fail property update if geocoding fails
+      }
     }
 
     const property = await Property.findByIdAndUpdate(

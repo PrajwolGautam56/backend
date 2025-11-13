@@ -21,6 +21,8 @@ export interface IUser extends Document {
     timestamp: Date;
     details?: any;
   }[];
+  resetPasswordToken?: string | null;
+  resetPasswordExpires?: Date | null;
 }
 
 const UserSchema: Schema = new Schema({
@@ -41,7 +43,9 @@ const UserSchema: Schema = new Schema({
     action: { type: String },
     timestamp: { type: Date, default: Date.now },
     details: { type: Schema.Types.Mixed }
-  }]
+  }],
+  resetPasswordToken: { type: String, default: null },
+  resetPasswordExpires: { type: Date, default: null }
 }, {
   timestamps: true
 });
@@ -49,8 +53,16 @@ const UserSchema: Schema = new Schema({
 UserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   
+  // If the password already looks like a bcrypt hash, skip re-hashing.
+  // This enables creating users from pre-hashed passwords (e.g., pending signup flow).
+  const passwordStr = this.password as string;
+  const isBcryptHash = typeof passwordStr === 'string' && passwordStr.startsWith('$2');
+  if (isBcryptHash) {
+    return next();
+  }
+
   const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password as string, salt);
+  this.password = await bcrypt.hash(passwordStr, salt);
   next();
 });
 

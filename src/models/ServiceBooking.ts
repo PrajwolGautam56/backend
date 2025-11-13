@@ -15,6 +15,22 @@ export interface IServiceBooking extends Document {
   additional_notes?: string;
   status: 'requested'| 'accepted' | 'ongoing' | 'completed' | 'cancelled';
   userId?: Schema.Types.ObjectId; // Reference to User
+  // Payment tracking
+  service_charge?: number;
+  payment_status?: 'Pending' | 'Partial' | 'Paid' | 'Refunded';
+  payment_records?: Array<{
+    payment_id: string;
+    amount: number;
+    payment_date: Date;
+    payment_method: 'Cash' | 'UPI' | 'Card' | 'Bank Transfer' | 'Cheque' | 'Other';
+    payment_reference?: string;
+    invoice_generated: boolean;
+    invoice_number?: string;
+  }>;
+  total_paid?: number;
+  invoice_number?: string;
+  invoice_generated?: boolean;
+  invoice_generated_at?: Date;
   created_at: Date;
   updated_at: Date;
 }
@@ -98,7 +114,29 @@ const ServiceBookingSchema: Schema = new Schema({
     type: String,
     enum: ['requested', 'accepted', 'ongoing','completed', 'cancelled'],
     default: 'requested'
-  }
+  },
+  service_charge: { type: Number },
+  payment_status: {
+    type: String,
+    enum: ['Pending', 'Partial', 'Paid', 'Refunded'],
+    default: 'Pending'
+  },
+  payment_records: [{
+    payment_id: String,
+    amount: Number,
+    payment_date: { type: Date, default: Date.now },
+    payment_method: {
+      type: String,
+      enum: ['Cash', 'UPI', 'Card', 'Bank Transfer', 'Cheque', 'Other']
+    },
+    payment_reference: String,
+    invoice_generated: { type: Boolean, default: false },
+    invoice_number: String
+  }],
+  total_paid: { type: Number, default: 0 },
+  invoice_number: { type: String },
+  invoice_generated: { type: Boolean, default: false },
+  invoice_generated_at: { type: Date }
 }, {
   timestamps: { 
     createdAt: 'created_at', 

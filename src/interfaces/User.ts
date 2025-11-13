@@ -20,4 +20,6 @@ export interface IUser extends Document {
   isAdmin: boolean;
   otp?: string; // Field to store OTP
   otpExpires?: Date;
+  resetPasswordToken?: string | null;
+  resetPasswordExpires?: Date | null;
 }
