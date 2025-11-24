@@ -11,6 +11,7 @@ import { IUser, UserRole } from '../interfaces/User';
 import PendingSignup from '../models/PendingSignup';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
+import { sendOtp as sendOtpEmail } from '../utils/email';
 
 // Only initialize Google client if Google auth is enabled
 let googleClient: OAuth2Client | null = null;
@@ -18,50 +19,8 @@ if (config.isGoogleAuthEnabled()) {
   googleClient = new OAuth2Client(config.GOOGLE_CLIENT_ID!);
 }
 
-// Function to send OTP with timeout protection
-const sendOtp = async (email: string, otp: string) => {
-  if (!config.isEmailEnabled()) {
-    logger.warn('Email service not configured. OTP:', { otp, email });
-    return;
-  }
-
-  const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: config.NODEMAILER_EMAIL,
-        pass: config.NODEMAILER_PASSWORD,
-      },
-    // Add connection timeout settings
-    connectionTimeout: 10000, // 10 seconds
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  });
-
-  const mailOptions = {
-    from: config.NODEMAILER_EMAIL,
-    to: email,
-    subject: 'Your OTP for Signup',
-    html: `
-      <h2>Your OTP for Signup</h2>
-      <p>Hello,</p>
-      <p>Your verification code is:</p>
-      <h1 style="font-size: 32px; letter-spacing: 5px; color: #2563eb;">${otp}</h1>
-      <p>This code will expire in 20 minutes.</p>
-      <p>If you didn't request this code, please ignore this email.</p>
-      <p>Thank you,<br>BrokerIn Team</p>
-    `,
-    text: `Your OTP is: ${otp}. This code will expire in 20 minutes.`
-  };
-
-  // Send with timeout protection
-  const sendPromise = transporter.sendMail(mailOptions);
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000);
-  });
-
-  await Promise.race([sendPromise, timeoutPromise]);
-  logger.info('OTP email sent successfully', { email });
-};
+// Note: sendOtp function is now imported from utils/email.ts
+// This ensures it uses the shared transporter like all other emails
 
 // Forgot Password: Request Reset
 export const requestPasswordReset = async (req: Request, res: Response) => {
@@ -206,9 +165,11 @@ export const requestSignupOtp = async (req: Request, res: Response) => {
     // Return response immediately, email will be sent in background
     if (config.isEmailEnabled()) {
       // Fire and forget - don't await to prevent timeout
-      sendOtp(email, otp).catch((emailError) => {
+      // Use the shared email function from utils/email.ts (same as all other emails)
+      sendOtpEmail(email, otp, 'Signup').catch((emailError: any) => {
         logger.error('Error sending OTP email (non-blocking)', { 
-          error: emailError, 
+          error: emailError?.message || emailError,
+          stack: emailError?.stack,
           email,
           otp // Log OTP for manual verification if email fails
         });
@@ -302,9 +263,17 @@ export const signup = async (req: Request, res: Response) => {
 
     // Send OTP only if email service is enabled
     if (config.isEmailEnabled()) {
-    await sendOtp(email, otp);
+      // Use the shared email function from utils/email.ts (same as all other emails)
+      sendOtpEmail(email, otp, 'Signup').catch((emailError: any) => {
+        logger.error('Error sending OTP email during signup', { 
+          error: emailError?.message || emailError,
+          stack: emailError?.stack,
+          email,
+          otp
+        });
+      });
     } else {
-      logger.warn('Signup: Email not configured; user will need manual OTP delivery', { email });
+      logger.warn('Signup: Email not configured; user will need manual OTP delivery', { email, otp });
     }
 
     await user.save();

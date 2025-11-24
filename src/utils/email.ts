@@ -101,6 +101,55 @@ const getEmailTemplate = (content: string, subject?: string): string => {
   `;
 };
 
+// Send OTP email for signup/verification
+export const sendOtp = async (email: string, otp: string, purpose: string = 'Signup') => {
+  if (!transporter || !email) {
+    logger.warn('Email not configured or no email provided for OTP', { email, purpose });
+    return;
+  }
+
+  const content = `
+    <p style="font-size: 16px; color: #374151; margin: 0 0 20px 0;">Hello,</p>
+    <p style="font-size: 16px; color: #374151; margin: 0 0 30px 0;">Your verification code for ${purpose} is:</p>
+    
+    <div style="background-color: #eff6ff; border: 2px solid #2563eb; border-radius: 8px; padding: 30px; text-align: center; margin: 30px 0;">
+      <h1 style="font-size: 48px; letter-spacing: 8px; color: #2563eb; margin: 0; font-weight: 700; font-family: 'Courier New', monospace;">${otp}</h1>
+    </div>
+    
+    <p style="font-size: 16px; color: #374151; margin: 0 0 20px 0;">This code will expire in <strong>20 minutes</strong>.</p>
+    <p style="font-size: 14px; color: #6b7280; margin: 0 0 20px 0;">Please enter this code to complete your ${purpose.toLowerCase()} process.</p>
+    
+    <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
+      <p style="margin: 0; color: #92400e; font-size: 14px; font-weight: 600;">⚠️ Security Notice</p>
+      <p style="margin: 5px 0 0 0; color: #78350f; font-size: 13px;">If you didn't request this code, please ignore this email. Never share your OTP with anyone.</p>
+    </div>
+    
+    <p style="font-size: 14px; color: #6b7280; margin: 20px 0 0 0;">If you have any questions, please contact us at <a href="mailto:${COMPANY_INFO.email}" style="color: #2563eb; text-decoration: none;">${COMPANY_INFO.email}</a> or call us at <a href="tel:${COMPANY_INFO.phone}" style="color: #2563eb; text-decoration: none;">${COMPANY_INFO.phone}</a>.</p>
+  `;
+
+  const mailOptions = {
+    from: config.NODEMAILER_EMAIL,
+    to: email,
+    subject: `Your ${purpose} Verification Code - ${COMPANY_INFO.name}`,
+    html: getEmailTemplate(content, `${purpose} Verification Code`),
+    text: `Your ${purpose} verification code is: ${otp}\n\nThis code will expire in 20 minutes.\n\nIf you didn't request this code, please ignore this email.`
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    logger.info('OTP email sent successfully', { email, purpose });
+  } catch (error: any) {
+    logger.error('Error sending OTP email:', { 
+      error: error.message || error,
+      stack: error.stack,
+      email,
+      purpose,
+      otp // Log OTP for debugging if email fails
+    });
+    throw error; // Re-throw so caller can handle
+  }
+};
+
 // Send booking confirmation to customer
 export const sendBookingConfirmation = async (booking: IServiceBooking) => {
   if (!transporter || !(booking as any).email) {
