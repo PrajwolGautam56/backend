@@ -27,12 +27,14 @@ import { autoGeneratePaymentRecords } from './utils/rentalReminders';
 const app = express();
 
 // Enable CORS for all origins
+// Note: credentials: true requires specific origin, not '*'
+// If you need credentials, use: origin: process.env.FRONTEND_BASE_URL || 'http://localhost:3000'
 app.use(cors({
   origin: '*',
-  methods: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  credentials: true,
+  credentials: false, // Set to false when using origin: '*'
   preflightContinue: false,
   optionsSuccessStatus: 204,
   maxAge: 86400 // 24 hours

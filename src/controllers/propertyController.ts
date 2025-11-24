@@ -134,6 +134,39 @@ const uploadToCloudinary = async (file: Express.Multer.File, propertyName: strin
   }
 };
 
+// Helper function to delete photo from Cloudinary
+const deletePhotoFromCloudinary = async (photoUrl: string) => {
+  try {
+    // Extract public_id from Cloudinary URL
+    // URL format: https://res.cloudinary.com/{cloud_name}/image/upload/{version}/{folder}/{public_id}.{format}
+    // Or: https://res.cloudinary.com/{cloud_name}/image/upload/{folder}/{public_id}.{format}
+    
+    // Find the index of 'upload' in the URL
+    const uploadIndex = photoUrl.indexOf('/upload/');
+    if (uploadIndex === -1) {
+      logger.warn('Invalid Cloudinary URL format:', photoUrl);
+      return null;
+    }
+    
+    // Get the part after /upload/
+    const pathAfterUpload = photoUrl.substring(uploadIndex + '/upload/'.length);
+    
+    // Remove version if present (format: v1234567890/)
+    const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
+    
+    // Remove file extension
+    const publicIdWithFolder = pathWithoutVersion.replace(/\.[^/.]+$/, '');
+    
+    const result = await cloudinary.uploader.destroy(publicIdWithFolder);
+    logger.info('Deleted photo from Cloudinary:', { photoUrl, publicId: publicIdWithFolder, result });
+    return result;
+  } catch (error) {
+    logger.error('Error deleting photo from Cloudinary:', { photoUrl, error });
+    // Don't throw - continue even if deletion fails
+    return null;
+  }
+};
+
 // Admin endpoints
 export const addProperty = async (req: AuthRequest, res: Response) => {
   try {
@@ -294,19 +327,60 @@ export const updateProperty = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: 'Property not found' });
     }
 
-    // Upload new photos if provided
-    let photoUrls = existingProperty.photos || [];
+    // Handle photo updates:
+    // 1. If req.body.photos is provided (array of URLs), use it as the base (allows deletion)
+    // 2. Upload new photos from req.files and append them
+    // 3. Delete photos from Cloudinary that were removed
+    
+    const existingPhotos = existingProperty.photos || [];
+    let finalPhotoUrls: string[] = [];
+    
+    // If photos array is provided in body, use it (frontend sends list of photos to keep)
+    if (req.body.photos !== undefined) {
+      if (Array.isArray(req.body.photos)) {
+        finalPhotoUrls = req.body.photos;
+      } else if (typeof req.body.photos === 'string') {
+        // Handle single photo URL as string
+        finalPhotoUrls = [req.body.photos];
+      }
+    } else {
+      // If no photos array in body, keep all existing photos
+      finalPhotoUrls = [...existingPhotos];
+    }
+    
+    // Upload new photos if provided and append to the list
     if (req.files && Array.isArray(req.files) && req.files.length > 0) {
       const uploadPromises = (req.files as Express.Multer.File[]).map(
-        (file, index) => uploadToCloudinary(file, existingProperty.name || 'property', index)
+        (file, index) => uploadToCloudinary(file, existingProperty.name || 'property', Date.now() + index)
       );
-      photoUrls = await Promise.all(uploadPromises);
+      const newPhotoUrls = await Promise.all(uploadPromises);
+      finalPhotoUrls = [...finalPhotoUrls, ...newPhotoUrls];
+      logger.info('New photos uploaded:', { newCount: newPhotoUrls.length });
     }
+    
+    // Find photos that were removed (in existing but not in final list)
+    const photosToDelete = existingPhotos.filter(photo => !finalPhotoUrls.includes(photo));
+    
+    // Delete removed photos from Cloudinary
+    if (photosToDelete.length > 0) {
+      logger.info('Deleting photos from Cloudinary:', { count: photosToDelete.length, photos: photosToDelete });
+      await Promise.all(photosToDelete.map(photo => deletePhotoFromCloudinary(photo)));
+    }
+    
+    logger.info('Photos updated:', { 
+      existingCount: existingPhotos.length, 
+      finalCount: finalPhotoUrls.length,
+      deletedCount: photosToDelete.length,
+      newUploadedCount: req.files && Array.isArray(req.files) ? req.files.length : 0
+    });
 
+    // Build update data - exclude photos from req.body to avoid conflicts
+    const { photos, ...otherBodyFields } = req.body;
     const updateData: Partial<IProperty> = {
       updatedBy: req.userId,
-      ...req.body,
-      photos: photoUrls
+      updatedAt: new Date(),
+      ...otherBodyFields,
+      photos: finalPhotoUrls
     };
 
     // Handle nested address updates

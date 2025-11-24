@@ -58,6 +58,7 @@ export interface IRental extends Document {
   notes?: string;
   createdBy?: Schema.Types.ObjectId; // Admin who created this
   updatedBy?: Schema.Types.ObjectId; // Admin who last updated
+  last_reminder_sent_at?: Date; // Track when the last reminder was sent
 }
 
 const PaymentRecordSchema = new Schema<IPaymentRecord>({
@@ -130,6 +131,10 @@ const RentalSchema = new Schema<IRental>({
   updatedBy: {
     type: Schema.Types.ObjectId,
     ref: 'User',
+    required: false
+  },
+  last_reminder_sent_at: {
+    type: Date,
     required: false
   }
 }, {

@@ -18,7 +18,7 @@ if (config.isGoogleAuthEnabled()) {
   googleClient = new OAuth2Client(config.GOOGLE_CLIENT_ID!);
 }
 
-// Function to send OTP
+// Function to send OTP with timeout protection
 const sendOtp = async (email: string, otp: string) => {
   if (!config.isEmailEnabled()) {
     logger.warn('Email service not configured. OTP:', { otp, email });
@@ -31,7 +31,10 @@ const sendOtp = async (email: string, otp: string) => {
         user: config.NODEMAILER_EMAIL,
         pass: config.NODEMAILER_PASSWORD,
       },
-    
+    // Add connection timeout settings
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 
   const mailOptions = {
@@ -50,7 +53,14 @@ const sendOtp = async (email: string, otp: string) => {
     text: `Your OTP is: ${otp}. This code will expire in 20 minutes.`
   };
 
-  await transporter.sendMail(mailOptions);
+  // Send with timeout protection
+  const sendPromise = transporter.sendMail(mailOptions);
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000);
+  });
+
+  await Promise.race([sendPromise, timeoutPromise]);
+  logger.info('OTP email sent successfully', { email });
 };
 
 // Forgot Password: Request Reset
@@ -94,7 +104,7 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
         `,
         text: `Reset your password using this link (valid for 60 minutes): ${resetLink}`
       };
-      await transporter.sendMail(mailOptions);
+  await transporter.sendMail(mailOptions);
     }
 
     return res.status(200).json({ message: 'If an account exists, a reset email has been sent.' });
@@ -192,14 +202,27 @@ export const requestSignupOtp = async (req: Request, res: Response) => {
       createdAt: new Date()
     });
 
-    // Send OTP email if enabled
+    // Send OTP email asynchronously (non-blocking) to prevent timeout
+    // Return response immediately, email will be sent in background
     if (config.isEmailEnabled()) {
-      await sendOtp(email, otp);
+      // Fire and forget - don't await to prevent timeout
+      sendOtp(email, otp).catch((emailError) => {
+        logger.error('Error sending OTP email (non-blocking)', { 
+          error: emailError, 
+          email,
+          otp // Log OTP for manual verification if email fails
+        });
+      });
     } else {
       logger.warn('RequestSignupOtp: Email not configured; OTP logged', { email, otp });
     }
 
-    return res.status(200).json({ message: 'OTP sent. Please verify to complete registration.' });
+    // Return response immediately - don't wait for email
+    return res.status(200).json({ 
+      message: 'OTP sent. Please verify to complete registration.',
+      // Include OTP in response for development/testing (remove in production)
+      ...(process.env.NODE_ENV === 'development' ? { otp } : {})
+    });
   } catch (error) {
     logger.error('Error in requestSignupOtp', { error });
     return res.status(500).json({ message: 'Error requesting OTP' });
@@ -279,7 +302,7 @@ export const signup = async (req: Request, res: Response) => {
 
     // Send OTP only if email service is enabled
     if (config.isEmailEnabled()) {
-      await sendOtp(email, otp);
+    await sendOtp(email, otp);
     } else {
       logger.warn('Signup: Email not configured; user will need manual OTP delivery', { email });
     }

@@ -59,6 +59,7 @@ export interface IRental extends Document {
   notes?: string;
   createdBy?: Schema.Types.ObjectId;
   updatedBy?: Schema.Types.ObjectId;
+  last_reminder_sent_at?: Date; // Track when the last reminder was sent
   createdAt?: Date;
   updatedAt?: Date;
 }

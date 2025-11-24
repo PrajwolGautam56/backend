@@ -1034,7 +1034,8 @@ export const sendPaymentReminders = async (req: AuthRequest, res: Response) => {
 
     if (rental.status !== RentalStatus.ACTIVE) {
       return res.status(400).json({
-        message: 'Rental is not active'
+        message: 'Rental is not active',
+        last_reminder_sent_at: rental.last_reminder_sent_at || null
       });
     }
 
@@ -1045,8 +1046,35 @@ export const sendPaymentReminders = async (req: AuthRequest, res: Response) => {
 
     if (pendingPayments.length === 0 && overduePayments.length === 0) {
       return res.status(400).json({
-        message: 'No pending or overdue payments found'
+        message: 'No pending or overdue payments found',
+        last_reminder_sent_at: rental.last_reminder_sent_at || null
       });
+    }
+
+    // Check if reminder was sent within last 24 hours
+    const now = new Date();
+    const lastReminderSent = rental.last_reminder_sent_at;
+    
+    if (lastReminderSent) {
+      const timeSinceLastReminder = now.getTime() - lastReminderSent.getTime();
+      const hoursSinceLastReminder = timeSinceLastReminder / (1000 * 60 * 60);
+      
+      if (hoursSinceLastReminder < 24) {
+        const hoursRemaining = 24 - hoursSinceLastReminder;
+        const minutesRemaining = Math.ceil(hoursRemaining * 60);
+        
+        return res.status(429).json({
+          success: false,
+          message: `Reminder was recently sent. Please wait ${Math.ceil(hoursRemaining)} hour(s) before sending another reminder.`,
+          data: {
+            rental_id: rental.rental_id,
+            last_reminder_sent_at: lastReminderSent,
+            hours_remaining: Math.ceil(hoursRemaining),
+            minutes_remaining: minutesRemaining,
+            can_send_after: new Date(lastReminderSent.getTime() + 24 * 60 * 60 * 1000)
+          }
+        });
+      }
     }
 
     // Send comprehensive email
@@ -1058,11 +1086,16 @@ export const sendPaymentReminders = async (req: AuthRequest, res: Response) => {
       paymentLink
     );
 
+    // Update last reminder sent timestamp
+    rental.last_reminder_sent_at = now;
+    await rental.save();
+
     logger.info('Comprehensive payment reminder sent', { 
       rentalId: rental.rental_id, 
       admin: req.userId,
       pendingCount: pendingPayments.length,
-      overdueCount: overduePayments.length
+      overdueCount: overduePayments.length,
+      lastReminderSentAt: now
     });
 
     res.status(200).json({
@@ -1073,7 +1106,8 @@ export const sendPaymentReminders = async (req: AuthRequest, res: Response) => {
         pending_count: pendingPayments.length,
         overdue_count: overduePayments.length,
         total_pending: pendingPayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0),
-        total_overdue: overduePayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0)
+        total_overdue: overduePayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0),
+        last_reminder_sent_at: now
       }
     });
   } catch (error: any) {

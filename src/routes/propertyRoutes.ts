@@ -164,7 +164,7 @@ router.post('/', authenticateToken,isAdmin, propertyUpload.array('images', 5), a
  *       200:
  *         description: Property updated
  */
-router.put('/:id', authenticateToken,isAdmin, upload.array('photos'), updateProperty);
+router.put('/:id', authenticateToken,isAdmin, propertyUpload.array('photos', 5), updateProperty);
 
 /**
  * @swagger
