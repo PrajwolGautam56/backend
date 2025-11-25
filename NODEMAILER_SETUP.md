@@ -7,8 +7,11 @@ This guide explains how to configure Nodemailer for sending emails (rental remin
 Add these to your `.env` file (for local development) or Railway Variables (for production):
 
 ```env
-NODEMAILER_EMAIL=brokerin.in@gmail.com
-NODEMAILER_PASSWORD=weqtzipbgmbpfmit
+NODEMAILER_EMAIL=no-reply@brokerin.in
+NODEMAILER_PASSWORD=m1yXE3xhim2x
+NODEMAILER_SMTP_HOST=smtp.zoho.in
+NODEMAILER_SMTP_PORT=587
+NODEMAILER_SMTP_SECURE=false
 ```
 
 **Important Notes:**
@@ -23,8 +26,11 @@ NODEMAILER_PASSWORD=weqtzipbgmbpfmit
 1. **Create/Edit `.env` file** in the root directory:
    ```bash
    # Add these lines
-   NODEMAILER_EMAIL=brokerin.in@gmail.com
-   NODEMAILER_PASSWORD=weqtzipbgmbpfmit
+   NODEMAILER_EMAIL=no-reply@brokerin.in
+   NODEMAILER_PASSWORD=m1yXE3xhim2x
+   NODEMAILER_SMTP_HOST=smtp.zoho.in
+   NODEMAILER_SMTP_PORT=587
+   NODEMAILER_SMTP_SECURE=false
    ```
 
 2. **Restart your development server:**
@@ -46,8 +52,11 @@ NODEMAILER_PASSWORD=weqtzipbgmbpfmit
 1. **Go to Railway Dashboard** → Your Service → Variables
 
 2. **Add Environment Variables:**
-   - `NODEMAILER_EMAIL` = `brokerin.in@gmail.com`
-   - `NODEMAILER_PASSWORD` = `weqtzipbgmbpfmit` (no spaces)
+   - `NODEMAILER_EMAIL` = `no-reply@brokerin.in`
+   - `NODEMAILER_PASSWORD` = `m1yXE3xhim2x` (no spaces)
+   - `NODEMAILER_SMTP_HOST` = `smtp.zoho.in`
+   - `NODEMAILER_SMTP_PORT` = `587`
+   - `NODEMAILER_SMTP_SECURE` = `false`
 
 3. **Redeploy** (Railway will automatically redeploy when variables are added)
 
@@ -94,37 +103,34 @@ After adding the credentials, you can test by:
 
 2. **Check app password:**
    - Ensure no spaces in the password
-   - Verify it's a valid Gmail App Password (not regular password)
+   - Verify it's a valid Zoho App Password (not regular password)
 
-3. **Check Gmail settings:**
-   - Ensure "Less secure app access" is enabled OR
-   - Use App Password (recommended) from Google Account settings
+3. **Check Zoho Mail settings:**
+   - Confirm IMAP/SMTP access is enabled in the Zoho Mail admin console
+   - Use App Password (recommended) from Zoho Account settings
 
 4. **Check server logs:**
    - Look for email-related errors
    - Check if transporter is created successfully
 
-### Gmail App Password Setup
+### Zoho Mail App Password Setup
 
-If you need to generate a new app password:
-
-1. Go to Google Account → Security
-2. Enable 2-Step Verification (if not already enabled)
-3. Go to "App passwords"
-4. Generate a new app password for "Mail"
-5. Use the 16-character password (without spaces) in `.env`
+1. Log in to [Zoho Mail Admin Console](https://mailadmin.zoho.com/)
+2. Go to **Security & Compliance** → **App Passwords**
+3. Generate a new password for the `brokerin` app (if needed)
+4. Use the generated password (without spaces) for `NODEMAILER_PASSWORD`
 
 ## Security Notes
 
 - ⚠️ **Never commit `.env` file** to version control
 - ⚠️ **Never share app passwords** publicly
-- ⚠️ **Use App Passwords** instead of regular Gmail password
+- ⚠️ **Use App Passwords** instead of regular mailbox password
 - ⚠️ **Rotate passwords** periodically for security
 
 ## Current Configuration
 
-- **Email Service:** Gmail (via Nodemailer)
-- **Email Address:** brokerin.in@gmail.com
+- **Email Service:** Zoho Mail (via Nodemailer)
+- **Email Address:** no-reply@brokerin.in
 - **Status:** Ready to use (once credentials are added to environment)
 
 ## Automatic Email Schedule

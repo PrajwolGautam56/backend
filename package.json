@@ -16,7 +16,8 @@
     "postinstall": "npm run build",
     "prepare": "husky install",
     "debug:swagger": "NODE_ENV=production node -e \"console.log(require('./dist/config/swagger').specs)\"",
-    "start:prod": "NODE_ENV=production node dist/app.js"
+    "start:prod": "NODE_ENV=production node dist/app.js",
+    "geocode-properties": "ts-node scripts/geocodeExistingProperties.ts"
   },
   "keywords": [
     "flat-brokerage",

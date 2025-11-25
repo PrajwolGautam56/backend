@@ -8,19 +8,31 @@ import { InvoiceData, generateInvoiceHTML } from './invoiceGenerator';
 let transporter: nodemailer.Transporter | null = null;
 
 if (config.isEmailEnabled()) {
+  const smtpHost = config.NODEMAILER_SMTP_HOST || 'smtp.zoho.in';
+  const smtpPort = config.NODEMAILER_SMTP_PORT ? parseInt(config.NODEMAILER_SMTP_PORT, 10) : 587;
+  const smtpSecure = typeof config.NODEMAILER_SMTP_SECURE !== 'undefined'
+    ? config.NODEMAILER_SMTP_SECURE === 'true'
+    : smtpPort === 465;
+
   transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    requireTLS: !smtpSecure,
     auth: {
       user: config.NODEMAILER_EMAIL,
       pass: config.NODEMAILER_PASSWORD,
     },
+    tls: {
+      minVersion: 'TLSv1.2'
+    }
   });
 }
 
 // Company Information
 const COMPANY_INFO = {
   name: 'BrokerIn',
-  email: 'brokerin.in@gmail.com',
+  email: 'no-reply@brokerin.in',
   phone: '+91-8310652049', // Update with actual phone number
   address: 'Udayapala , Kanakapura Road, Bangalore, 560082', // Update with actual address
   website: 'https://brokerin.in', // Update with actual website

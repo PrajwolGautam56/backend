@@ -18,6 +18,7 @@ import furnitureTransactionRoutes from './routes/furnitureTransactionRoutes';
 import rentalRoutes from './routes/rentalRoutes';
 import userRoutes from './routes/userRoutes';
 import paymentRoutes from './routes/paymentRoutes';
+import geocodingRoutes from './routes/geocodingRoutes';
 import cron from 'node-cron';
 import User from './models/User'; // Adjust the import based on your file structure
 import { checkAndSendPaymentReminders } from './utils/rentalReminders';
@@ -66,6 +67,7 @@ app.use('/api/furniture-transactions', furnitureTransactionRoutes);
 app.use('/api/rentals', rentalRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/geocoding', geocodingRoutes);
 
 // Swagger Documentation with custom options
 app.use('/api-docs', swaggerUi.serve);
