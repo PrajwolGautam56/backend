@@ -7,6 +7,7 @@ import { PaymentStatus } from '../interfaces/FurnitureTransaction';
 import logger from '../utils/logger';
 import { generateInvoiceNumber, InvoiceData } from '../utils/invoiceGenerator';
 import { sendInvoiceEmail } from '../utils/email';
+import { sendEmailInBackground } from '../utils/emailDispatcher';
 
 const router: Router = express.Router();
 
@@ -150,10 +151,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req: e
               notes: transaction.customer_notes
             };
 
-            await sendInvoiceEmail(customer?.email, invoiceData, transaction.transaction_id);
-            logger.info('Invoice email sent via webhook', {
-              transactionId: transaction.transaction_id
-            });
+            sendEmailInBackground(
+              'Invoice email (webhook)',
+              () => sendInvoiceEmail(customer?.email, invoiceData, transaction.transaction_id),
+              { transactionId: transaction.transaction_id, email: customer?.email }
+            );
           } catch (emailError: any) {
             logger.error('Error sending invoice email via webhook', {
               error: emailError.message

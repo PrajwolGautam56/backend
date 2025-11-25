@@ -35,6 +35,10 @@ const PropertyFormSchema = new Schema<IPropertyForm>({
   timestamps: true // Automatically manage createdAt and updatedAt fields
 });
 
+PropertyFormSchema.index({ property_id: 1, status: 1 });
+PropertyFormSchema.index({ email: 1 });
+PropertyFormSchema.index({ createdAt: -1 });
+
 // Middleware to generate a unique id before saving
 
 const PropertyForm = mongoose.model<IPropertyForm>('PropertyForm', PropertyFormSchema);

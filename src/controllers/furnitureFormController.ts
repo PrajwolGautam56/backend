@@ -6,10 +6,11 @@ import User from '../models/User';
 import Rental, { RentalStatus } from '../models/Rental';
 import logger from '../utils/logger';
 import mongoose from 'mongoose';
-import { 
+import {
   sendFurnitureRequestConfirmation,
-  sendFurnitureStatusUpdate 
+  sendFurnitureStatusUpdate
 } from '../utils/email';
+import { sendEmailInBackground } from '../utils/emailDispatcher';
 
 /**
  * Create rental record when furniture is delivered (for Rent listings)
@@ -309,11 +310,14 @@ export const createFurnitureForm = async (req: AuthRequest, res: Response) => {
       logger.info('User activity tracked', { userId: req.userId, action: 'furniture_request' });
     }
 
-    // Send notification email (if configured)
-    try {
-      await sendFurnitureRequestConfirmation(furnitureForm, furniture);
-    } catch (emailError) {
-      logger.warn('Failed to send email notification', { error: emailError });
+    if (furnitureForm.email) {
+      sendEmailInBackground(
+        'Furniture request confirmation',
+        () => sendFurnitureRequestConfirmation(furnitureForm, furniture),
+        { email: furnitureForm.email, furnitureFormId: furnitureForm._id }
+      );
+    } else {
+      logger.warn('No email provided for furniture request confirmation', { furnitureFormId: furnitureForm._id });
     }
 
     logger.info('Furniture request created', { furnitureFormId: furnitureForm._id });
@@ -629,7 +633,11 @@ export const updateFurnitureFormStatus = async (req: AuthRequest, res: Response)
     // Send status update email
     if (furnitureForm && furnitureForm.email) {
       try {
-        await sendFurnitureStatusUpdate(furnitureForm, status);
+        sendEmailInBackground(
+          'Furniture status update',
+          () => sendFurnitureStatusUpdate(furnitureForm, status),
+          { email: furnitureForm.email, furnitureFormId: furnitureForm._id, status }
+        );
       } catch (emailError) {
         logger.warn('Failed to send status update email', { error: emailError });
         // Don't fail the request if email fails
@@ -755,7 +763,11 @@ export const updateFurnitureForm = async (req: AuthRequest, res: Response) => {
           // Send status update email
           if (furnitureForm.email) {
             try {
-              await sendFurnitureStatusUpdate(furnitureForm, updateData.status);
+              sendEmailInBackground(
+                'Furniture status update',
+                () => sendFurnitureStatusUpdate(furnitureForm, updateData.status!),
+                { email: furnitureForm.email, furnitureFormId: furnitureForm._id, status: updateData.status }
+              );
             } catch (emailError) {
               logger.warn('Failed to send status update email', { error: emailError });
             }

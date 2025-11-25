@@ -103,9 +103,29 @@ const getEmailTemplate = (content: string, subject?: string): string => {
 
 // Send OTP email for signup/verification
 export const sendOtp = async (email: string, otp: string, purpose: string = 'Signup') => {
-  if (!transporter || !email) {
-    logger.warn('Email not configured or no email provided for OTP', { email, purpose });
-    return;
+  // Detailed logging for debugging
+  logger.info('sendOtp called', { 
+    email, 
+    purpose,
+    hasTransporter: !!transporter,
+    hasEmail: !!email,
+    transporterType: transporter ? 'nodemailer' : 'null'
+  });
+  
+  if (!transporter) {
+    logger.error('OTP email FAILED: Transporter is null', { 
+      email, 
+      purpose,
+      isEmailEnabled: config.isEmailEnabled(),
+      NODEMAILER_EMAIL: config.NODEMAILER_EMAIL ? 'SET' : 'NOT SET',
+      NODEMAILER_PASSWORD: config.NODEMAILER_PASSWORD ? 'SET' : 'NOT SET'
+    });
+    throw new Error('Email transporter is not configured');
+  }
+  
+  if (!email) {
+    logger.error('OTP email FAILED: No email provided', { purpose });
+    throw new Error('Email address is required');
   }
 
   const content = `
@@ -136,15 +156,37 @@ export const sendOtp = async (email: string, otp: string, purpose: string = 'Sig
   };
 
   try {
-    await transporter.sendMail(mailOptions);
-    logger.info('OTP email sent successfully', { email, purpose });
+    logger.info('Sending OTP email via transporter', { 
+      email, 
+      purpose,
+      from: mailOptions.from,
+      subject: mailOptions.subject
+    });
+    
+    const result = await transporter.sendMail(mailOptions);
+    
+    logger.info('OTP email sent successfully', { 
+      email, 
+      purpose,
+      messageId: result.messageId,
+      response: result.response
+    });
+    
+    return result;
   } catch (error: any) {
-    logger.error('Error sending OTP email:', { 
+    // Detailed error logging
+    logger.error('ERROR sending OTP email:', { 
       error: error.message || error,
+      errorCode: error.code,
+      errorCommand: error.command,
+      errorResponse: error.response,
+      errorResponseCode: error.responseCode,
       stack: error.stack,
       email,
       purpose,
-      otp // Log OTP for debugging if email fails
+      otp, // Log OTP for debugging if email fails
+      from: mailOptions.from,
+      to: mailOptions.to
     });
     throw error; // Re-throw so caller can handle
   }

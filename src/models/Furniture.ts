@@ -86,6 +86,11 @@ const FurnitureSchema = new Schema<IFurniture>({
   timestamps: true
 });
 
+FurnitureSchema.index({ furniture_id: 1 }, { unique: true });
+FurnitureSchema.index({ listing_type: 1, status: 1 });
+FurnitureSchema.index({ category: 1 });
+FurnitureSchema.index({ createdAt: -1 });
+
 // Pre-save middleware to generate furniture_id
 FurnitureSchema.pre('save', function(next) {
   if (this.isNew) {

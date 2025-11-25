@@ -7,8 +7,10 @@ import mongoose from 'mongoose';
 import {
   sendRentalConfirmation,
   sendPaymentConfirmation,
-  sendRentalStatusUpdate
+  sendRentalStatusUpdate,
+  sendComprehensivePaymentReminder
 } from '../utils/email';
+import { sendEmailInBackground } from '../utils/emailDispatcher';
 
 // Helper to link rental to user by email
 const linkRentalToUser = async (email: string): Promise<mongoose.Types.ObjectId | null> => {
@@ -186,14 +188,12 @@ export const createRental = async (req: AuthRequest, res: Response) => {
     // Reload rental to get payment records
     const rentalWithPayments = await Rental.findById(rental._id);
 
-    // Send confirmation email
     if (rentalWithPayments) {
-      try {
-        await sendRentalConfirmation(rentalWithPayments.toObject());
-      } catch (emailError) {
-        logger.warn('Failed to send rental confirmation email', { error: emailError });
-        // Don't fail the request if email fails
-      }
+      sendEmailInBackground(
+        'Rental confirmation',
+        () => sendRentalConfirmation(rentalWithPayments.toObject()),
+        { rentalId: rentalWithPayments.rental_id, email: rentalWithPayments.customer_email }
+      );
     }
 
     // Track activity
@@ -762,13 +762,17 @@ export const updateRental = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Send status update email if status changed
     if (updateData.status && oldRental.status !== updateData.status) {
-      try {
-        await sendRentalStatusUpdate(rental.toObject(), oldRental.status, updateData.status);
-      } catch (emailError) {
-        logger.warn('Failed to send rental status update email', { error: emailError });
-      }
+      sendEmailInBackground(
+        'Rental status update',
+        () => sendRentalStatusUpdate(rental.toObject(), oldRental.status, updateData.status!),
+        {
+          rentalId: rental.rental_id,
+          oldStatus: oldRental.status,
+          newStatus: updateData.status,
+          email: rental.customer_email
+        }
+      );
     }
 
     // Track activity
@@ -915,13 +919,16 @@ export const updatePaymentRecord = async (req: AuthRequest, res: Response) => {
 
     await rental.save();
 
-    // Send payment confirmation email if status changed to Paid
     if (status === PaymentStatus.PAID && oldPaymentStatus !== PaymentStatus.PAID) {
-      try {
-        await sendPaymentConfirmation(rental.toObject(), rental.payment_records[paymentIndex].toObject());
-      } catch (emailError) {
-        logger.warn('Failed to send payment confirmation email', { error: emailError });
-      }
+      sendEmailInBackground(
+        'Rental payment confirmation',
+        () => sendPaymentConfirmation(rental.toObject(), rental.payment_records[paymentIndex].toObject()),
+        {
+          rentalId: rental.rental_id,
+          email: rental.customer_email,
+          paymentId
+        }
+      );
     }
 
     // Track activity
@@ -1077,13 +1084,20 @@ export const sendPaymentReminders = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Send comprehensive email
-    const { sendComprehensivePaymentReminder } = await import('../utils/email');
-    await sendComprehensivePaymentReminder(
-      rental.toObject(),
-      pendingPayments,
-      overduePayments,
-      paymentLink
+    sendEmailInBackground(
+      'Rental comprehensive payment reminder',
+      () => sendComprehensivePaymentReminder(
+        rental.toObject(),
+        pendingPayments,
+        overduePayments,
+        paymentLink
+      ),
+      {
+        rentalId: rental.rental_id,
+        pendingCount: pendingPayments.length,
+        overdueCount: overduePayments.length,
+        admin: req.userId
+      }
     );
 
     // Update last reminder sent timestamp

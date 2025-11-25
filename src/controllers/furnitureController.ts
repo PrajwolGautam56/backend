@@ -60,7 +60,8 @@ export const getFurniture = async (req: Request, res: Response) => {
       .skip((page - 1) * limit)
       .limit(limit)
       .select('-__v')
-      .populate('added_by', 'fullName username email phoneNumber');
+      .populate('added_by', 'fullName username email phoneNumber')
+      .lean();
 
     res.json({
       furniture,

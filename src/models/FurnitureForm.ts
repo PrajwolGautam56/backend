@@ -59,5 +59,10 @@ const FurnitureFormSchema = new Schema<IFurnitureForm>({
   timestamps: true
 });
 
+FurnitureFormSchema.index({ furniture_id: 1, status: 1 });
+FurnitureFormSchema.index({ email: 1 });
+FurnitureFormSchema.index({ createdAt: -1 });
+FurnitureFormSchema.index({ listing_type: 1, payment_status: 1 });
+
 export default mongoose.model<IFurnitureForm>('FurnitureForm', FurnitureFormSchema);
 

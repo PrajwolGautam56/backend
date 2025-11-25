@@ -8,6 +8,7 @@ import { generateInvoiceNumber, generateInvoiceHTML, InvoiceData } from '../util
 import logger from '../utils/logger';
 import crypto from 'crypto';
 import { sendInvoiceEmail } from '../utils/email';
+import { sendEmailInBackground } from '../utils/emailDispatcher';
 
 /**
  * Create a new furniture transaction (rent or sale)
@@ -303,11 +304,11 @@ export const addPayment = async (req: AuthRequest, res: Response) => {
           notes: transaction.customer_notes
         };
 
-        await sendInvoiceEmail(customer?.email, invoiceData, transaction.transaction_id);
-        logger.info('Invoice email sent', { 
-          transactionId: transaction.transaction_id,
-          email: customer?.email 
-        });
+        sendEmailInBackground(
+          'Invoice email',
+          () => sendInvoiceEmail(customer?.email, invoiceData, transaction.transaction_id),
+          { transactionId: transaction.transaction_id, email: customer?.email }
+        );
       } catch (emailError: any) {
         logger.error('Error sending invoice email', { 
           error: emailError.message,

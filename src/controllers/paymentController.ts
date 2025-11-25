@@ -7,6 +7,7 @@ import { createRazorpayOrder, verifyPaymentSignature, fetchPaymentDetails } from
 import { PaymentStatus, TransactionType } from '../interfaces/FurnitureTransaction';
 import { generateInvoiceNumber, InvoiceData } from '../utils/invoiceGenerator';
 import { sendInvoiceEmail } from '../utils/email';
+import { sendEmailInBackground } from '../utils/emailDispatcher';
 import logger from '../utils/logger';
 import crypto from 'crypto';
 import { config } from '../config/config';
@@ -214,11 +215,11 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
           notes: transaction.customer_notes
         };
 
-        await sendInvoiceEmail(customer?.email, invoiceData, transaction.transaction_id);
-        logger.info('Invoice email sent after Razorpay payment', {
-          transactionId: transaction.transaction_id,
-          email: customer?.email
-        });
+        sendEmailInBackground(
+          'Invoice email',
+          () => sendInvoiceEmail(customer?.email, invoiceData, transaction.transaction_id),
+          { transactionId: transaction.transaction_id, email: customer?.email }
+        );
       } catch (emailError: any) {
         logger.error('Error sending invoice email', {
           error: emailError.message,

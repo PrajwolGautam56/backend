@@ -161,28 +161,53 @@ export const requestSignupOtp = async (req: Request, res: Response) => {
       createdAt: new Date()
     });
 
-    // Send OTP email asynchronously (non-blocking) to prevent timeout
-    // Return response immediately, email will be sent in background
+    // Send OTP email with improved error handling
     if (config.isEmailEnabled()) {
-      // Fire and forget - don't await to prevent timeout
-      // Use the shared email function from utils/email.ts (same as all other emails)
-      sendOtpEmail(email, otp, 'Signup').catch((emailError: any) => {
-        logger.error('Error sending OTP email (non-blocking)', { 
-          error: emailError?.message || emailError,
-          stack: emailError?.stack,
-          email,
-          otp // Log OTP for manual verification if email fails
-        });
+      // Try to send email, but don't block the response
+      // Log detailed information for debugging
+      logger.info('Attempting to send OTP email', { 
+        email, 
+        hasTransporter: true, // We know email is enabled
+        timestamp: new Date().toISOString()
       });
+      
+      sendOtpEmail(email, otp, 'Signup')
+        .then(() => {
+          logger.info('OTP email sent successfully (background)', { email });
+        })
+        .catch((emailError: any) => {
+          // Log detailed error information
+          logger.error('FAILED to send OTP email (non-blocking)', { 
+            error: emailError?.message || emailError,
+            errorCode: emailError?.code,
+            errorResponse: emailError?.response,
+            stack: emailError?.stack,
+            email,
+            otp, // Log OTP for manual verification if email fails
+            timestamp: new Date().toISOString()
+          });
+        });
     } else {
-      logger.warn('RequestSignupOtp: Email not configured; OTP logged', { email, otp });
+      logger.warn('RequestSignupOtp: Email not configured; OTP logged', { 
+        email, 
+        otp,
+        NODEMAILER_EMAIL: config.NODEMAILER_EMAIL ? 'SET' : 'NOT SET',
+        NODEMAILER_PASSWORD: config.NODEMAILER_PASSWORD ? 'SET' : 'NOT SET'
+      });
     }
 
     // Return response immediately - don't wait for email
+    // TEMPORARY: Include OTP in response for debugging email issues
+    // TODO: Remove this once email delivery is confirmed working
     return res.status(200).json({ 
       message: 'OTP sent. Please verify to complete registration.',
-      // Include OTP in response for development/testing (remove in production)
-      ...(process.env.NODE_ENV === 'development' ? { otp } : {})
+      // Include OTP in response for debugging (check server logs if email fails)
+      otp: otp, // TEMPORARY - for debugging email delivery issues
+      debug: {
+        email: email,
+        timestamp: new Date().toISOString(),
+        note: 'Check server logs for email delivery status. OTP included for debugging.'
+      }
     });
   } catch (error) {
     logger.error('Error in requestSignupOtp', { error });

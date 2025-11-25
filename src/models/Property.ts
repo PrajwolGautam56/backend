@@ -95,6 +95,12 @@ const PropertySchema = new Schema<IProperty>({
   strictQuery: false // Allow queries on fields not in schema
 });
 
+// Helpful indexes for faster filtering/searching
+PropertySchema.index({ property_id: 1 }, { unique: true });
+PropertySchema.index({ status: 1, listing_type: 1 });
+PropertySchema.index({ createdAt: -1 });
+PropertySchema.index({ 'address.city': 1 });
+
 // Pre-save middleware to generate property_id and ensure all fields are optional
 PropertySchema.pre('save', function(next) {
   if (this.isNew) {

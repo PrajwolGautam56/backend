@@ -8,6 +8,7 @@ import {
   sendPropertyRequestConfirmation,
   sendPropertyStatusUpdate 
 } from '../utils/email';
+import { sendEmailInBackground } from '../utils/emailDispatcher';
 
 // Create a new property form entry
 export const createPropertyForm = async (req: AuthRequest, res: Response) => {
@@ -86,15 +87,19 @@ export const createPropertyForm = async (req: AuthRequest, res: Response) => {
       logger.info('User activity tracked', { userId: req.userId, action: 'property_request' });
     }
 
-    // Send notification email (if configured)
-    try {
-      await sendPropertyRequestConfirmation(propertyForm, property);
-    } catch (emailError) {
-      logger.warn('Failed to send email notification', { error: emailError });
+    if (propertyForm.email) {
+      sendEmailInBackground(
+        'Property request confirmation',
+        () => sendPropertyRequestConfirmation(propertyForm, property),
+        { email: propertyForm.email, propertyFormId: propertyForm._id }
+      );
+    } else {
+      logger.warn('No email provided for property request confirmation', { propertyFormId: propertyForm._id });
     }
 
     logger.info('Property request created', { propertyFormId: propertyForm._id });
     
+    // Return response immediately - don't wait for email
     res.status(201).json({ 
       message: "Property request submitted successfully", 
       request_details: propertyForm,
@@ -216,13 +221,16 @@ export const updatePropertyFormStatus = async (req: AuthRequest, res: Response) 
       { new: true }
     ).populate('userId', 'fullName email');
 
-    // Send status update email
     if (propertyForm && propertyForm.email) {
-      try {
-        await sendPropertyStatusUpdate(propertyForm, status);
-      } catch (emailError) {
-        logger.warn('Failed to send status update email', { error: emailError });
-      }
+      sendEmailInBackground(
+        'Property status update',
+        () => sendPropertyStatusUpdate(propertyForm, status),
+        {
+          email: propertyForm.email,
+          propertyFormId: propertyForm._id,
+          status
+        }
+      );
     }
 
     // Track admin activity

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import ServiceBooking from '../models/ServiceBooking';
 import logger from '../utils/logger';
 import { sendBookingConfirmation, sendBookingUpdate, sendStatusUpdate, sendAdminNotification } from '../utils/email';
+import { sendEmailInBackground } from '../utils/emailDispatcher';
 import { AuthRequest } from '../interfaces/Request';
 import User from '../models/User';
 
@@ -67,9 +68,17 @@ export const serviceBookingController = {
         bookingId: booking.service_booking_id 
       });
 
-      // Send email notifications
-      await sendBookingConfirmation(booking);
-      await sendAdminNotification(booking);
+      // Send email notifications asynchronously
+      sendEmailInBackground(
+        'Service booking confirmation',
+        () => sendBookingConfirmation(booking),
+        { bookingId: booking.service_booking_id, email: booking.email }
+      );
+      sendEmailInBackground(
+        'Service booking admin notification',
+        () => sendAdminNotification(booking),
+        { bookingId: booking.service_booking_id }
+      );
 
       res.status(201).json(booking);
     } catch (error) {
@@ -96,7 +105,8 @@ export const serviceBookingController = {
       if (phone_number) query.phone_number = phone_number;
 
       const bookings = await ServiceBooking.find(query)
-        .sort({ preferred_date: -1 });
+        .sort({ preferred_date: -1 })
+        .lean();
 
       res.json(bookings);
     } catch (error) {
@@ -127,7 +137,8 @@ export const serviceBookingController = {
           { email: { $regex: new RegExp(`^${user.email}$`, 'i') } } // Case-insensitive email match
         ]
       })
-        .sort({ created_at: -1 });
+        .sort({ created_at: -1 })
+        .lean();
 
       // Track activity
       await User.findByIdAndUpdate(userId, {
@@ -214,8 +225,11 @@ export const serviceBookingController = {
         });
       }
 
-      // Send status update email
-      await sendStatusUpdate(booking, status);
+      sendEmailInBackground(
+        'Service booking status update',
+        () => sendStatusUpdate(booking, status),
+        { bookingId: booking.service_booking_id, status, email: booking.email }
+      );
 
       res.json(booking);
     } catch (error) {
@@ -273,12 +287,16 @@ export const serviceBookingController = {
 
       // Send update email if time changed
       if (updateData.preferred_date && updateData.preferred_time && (booking as any).email) {
-        await sendBookingUpdate(
-          booking,
-          oldBooking.preferred_date,
-          oldBooking.preferred_time,
-          new Date(updateData.preferred_date),
-          updateData.preferred_time as string
+        sendEmailInBackground(
+          'Service booking schedule update',
+          () => sendBookingUpdate(
+            booking,
+            oldBooking.preferred_date,
+            oldBooking.preferred_time,
+            new Date(updateData.preferred_date),
+            updateData.preferred_time as string
+          ),
+          { bookingId: booking.service_booking_id, email: (booking as any).email }
         );
       }
 
@@ -360,14 +378,17 @@ export const serviceBookingController = {
         userId
       });
 
-      // Send update email if time/date changed
       if ((updateData.preferred_date || updateData.preferred_time) && oldBooking && updatedBooking) {
-        await sendBookingUpdate(
-          updatedBooking,
-          oldBooking.preferred_date,
-          oldBooking.preferred_time,
-          updatedBooking.preferred_date,
-          updatedBooking.preferred_time
+        sendEmailInBackground(
+          'Service booking schedule update',
+          () => sendBookingUpdate(
+            updatedBooking,
+            oldBooking.preferred_date,
+            oldBooking.preferred_time,
+            updatedBooking.preferred_date,
+            updatedBooking.preferred_time
+          ),
+          { bookingId: updatedBooking.service_booking_id, email: updatedBooking.email }
         );
       }
 
@@ -437,8 +458,13 @@ export const serviceBookingController = {
         userId
       });
 
-      // Send cancellation email
-      await sendStatusUpdate(cancelledBooking!, 'cancelled');
+      if (cancelledBooking) {
+        sendEmailInBackground(
+          'Service booking cancellation notice',
+          () => sendStatusUpdate(cancelledBooking, 'cancelled'),
+          { bookingId: cancelledBooking.service_booking_id, email: cancelledBooking.email }
+        );
+      }
 
       res.json({ message: 'Booking cancelled successfully', booking: cancelledBooking });
     } catch (error) {
