@@ -258,13 +258,13 @@ export const createFurnitureForm = async (req: AuthRequest, res: Response) => {
       userId: req.userId ? req.userId : undefined
     };
 
-    // Validate required fields
+    // Validate required fields (message is optional)
     const requiredFields: Record<string, any> = {
       furniture_id: furnitureFormData.furniture_id,
+      listing_type: furnitureFormData.listing_type,
       name: furnitureFormData.name,
       email: furnitureFormData.email,
-      phoneNumber: furnitureFormData.phoneNumber,
-      message: furnitureFormData.message
+      phoneNumber: furnitureFormData.phoneNumber
     };
 
     const missingFields: string[] = [];
@@ -279,6 +279,11 @@ export const createFurnitureForm = async (req: AuthRequest, res: Response) => {
         message: 'Missing required fields',
         missingFields: missingFields
       });
+    }
+
+    // Provide a default message if user left it blank
+    if (!furnitureFormData.message || furnitureFormData.message.trim().length === 0) {
+      furnitureFormData.message = `${furnitureFormData.name} submitted a ${furnitureFormData.listing_type || 'Rent'} request`;
     }
 
     // Get furniture details
