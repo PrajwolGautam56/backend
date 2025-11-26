@@ -1,13 +1,41 @@
 import nodemailer from 'nodemailer';
+import { SendMailClient } from 'zeptomail';
 import { IServiceBooking } from '../models/ServiceBooking';
 import logger from './logger';
 import { config } from '../config/config';
 import { InvoiceData, generateInvoiceHTML } from './invoiceGenerator';
 
-// Create transporter if email is configured
+// Email providers
 let transporter: nodemailer.Transporter | null = null;
+let zeptoClient: SendMailClient | null = null;
 
-if (config.isEmailEnabled()) {
+const activeEmailProvider = config.emailProvider;
+
+if (activeEmailProvider === 'zepto' && config.ZEPTO_TOKEN) {
+  try {
+    const zeptoUrl = config.ZEPTO_URL || 'https://api.zeptomail.in/v1.1/email';
+    // Ensure token has the correct prefix (ZeptoMail expects "Zoho-enczapikey <token>")
+    const fullToken = config.ZEPTO_TOKEN.startsWith('Zoho-enczapikey ') 
+      ? config.ZEPTO_TOKEN 
+      : `Zoho-enczapikey ${config.ZEPTO_TOKEN}`;
+    
+    zeptoClient = new SendMailClient({
+      url: zeptoUrl,
+      token: fullToken
+    });
+      logger.info('ZeptoMail client initialized', {
+      provider: 'zepto',
+      url: zeptoUrl,
+      tokenHasPrefix: config.ZEPTO_TOKEN.startsWith('Zoho-enczapikey '),
+      bounceEmail: config.ZEPTO_BOUNCE_EMAIL ? 'configured (optional)' : 'not set (optional)'
+    });
+  } catch (error: any) {
+    logger.error('Failed to initialize ZeptoMail client', {
+      error: error?.message || error,
+      stack: error?.stack
+    });
+  }
+} else if (config.isEmailEnabled()) {
   const smtpHost = config.NODEMAILER_SMTP_HOST || 'smtp.zoho.in';
   const smtpPort = config.NODEMAILER_SMTP_PORT ? parseInt(config.NODEMAILER_SMTP_PORT, 10) : 587;
   const smtpSecure = typeof config.NODEMAILER_SMTP_SECURE !== 'undefined'
@@ -63,6 +91,8 @@ if (config.isEmailEnabled()) {
         secure: smtpSecure
       });
     });
+} else {
+  logger.warn('Email provider not configured. All email sends will be skipped.');
 }
 
 // Company Information
@@ -73,6 +103,330 @@ const COMPANY_INFO = {
   address: 'Udayapala , Kanakapura Road, Bangalore, 560082', // Update with actual address
   website: 'https://brokerin.in', // Update with actual website
   logoUrl: 'https://www.brokerin.in/images/logo.png' // Replace with actual logo URL
+};
+
+type AddressInput = string | { address: string; name?: string } | undefined | null;
+
+const hasEmailTransport = () => !!zeptoClient || !!transporter;
+
+const getActiveEmailProviderLabel = () => {
+  if (zeptoClient) return 'zepto';
+  if (transporter) return 'smtp';
+  return 'none';
+};
+
+const parseAddressString = (value: string): Array<{ address: string; name?: string }> => {
+  return value
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const match = part.match(/^(.*)<(.+)>$/);
+      if (match) {
+        return {
+          name: match[1].trim().replace(/(^"|"$)/g, ''),
+          address: match[2].trim()
+        };
+      }
+      return { address: part };
+    });
+};
+
+const normalizeAddressList = (
+  input?: AddressInput | AddressInput[]
+): Array<{ address: string; name?: string }> => {
+  if (!input) return [];
+  const list = Array.isArray(input) ? input : [input];
+
+  return list
+    .flatMap((entry) => {
+      if (!entry) return [];
+      if (typeof entry === 'string') {
+        return parseAddressString(entry);
+      }
+      if (typeof entry === 'object' && entry.address) {
+        return [{ address: entry.address, name: entry.name }];
+      }
+      return [];
+    })
+    .filter((entry) => !!entry.address);
+};
+
+const getFromAddress = (from?: AddressInput) => {
+  if (config.ZEPTO_FROM_EMAIL) {
+    return {
+      address: config.ZEPTO_FROM_EMAIL,
+      name: config.ZEPTO_FROM_NAME || COMPANY_INFO.name
+    };
+  }
+
+  if (typeof from === 'string') {
+    const parsed = parseAddressString(from)[0];
+    if (parsed) {
+      return {
+        address: parsed.address,
+        name: parsed.name || COMPANY_INFO.name
+      };
+    }
+  } else if (from && typeof from === 'object' && from.address) {
+    return {
+      address: from.address,
+      name: from.name || COMPANY_INFO.name
+    };
+  }
+
+  return {
+    address: config.NODEMAILER_EMAIL || COMPANY_INFO.email,
+    name: COMPANY_INFO.name
+  };
+};
+
+const sendEmailViaZepto = async (mailOptions: nodemailer.SendMailOptions) => {
+  if (!zeptoClient) {
+    throw new Error('ZeptoMail client is not initialized');
+  }
+
+  const toList = normalizeAddressList(mailOptions.to);
+  if (toList.length === 0) {
+    throw new Error('No recipient address provided');
+  }
+
+  const payload: any = {
+    from: getFromAddress(mailOptions.from),
+    to: toList.map((recipient) => ({
+      email_address: {
+        address: recipient.address,
+        name: recipient.name || ''
+      }
+    })),
+    subject: mailOptions.subject,
+  };
+
+  // Bounce address is optional - only include if configured
+  if (config.ZEPTO_BOUNCE_EMAIL) {
+    payload.bounce_address = {
+      address: config.ZEPTO_BOUNCE_EMAIL
+    };
+  }
+
+  const ccList = normalizeAddressList(mailOptions.cc as any);
+  if (ccList.length > 0) {
+    payload.cc = ccList.map((recipient) => ({
+      email_address: {
+        address: recipient.address,
+        name: recipient.name || ''
+      }
+    }));
+  }
+
+  const bccList = normalizeAddressList(mailOptions.bcc as any);
+  if (bccList.length > 0) {
+    payload.bcc = bccList.map((recipient) => ({
+      email_address: {
+        address: recipient.address,
+        name: recipient.name || ''
+      }
+    }));
+  }
+
+  if (mailOptions.replyTo) {
+    const replyTo = normalizeAddressList(mailOptions.replyTo as any)[0];
+    if (replyTo) {
+      payload.reply_to = {
+        address: replyTo.address,
+        name: replyTo.name || ''
+      };
+    }
+  }
+
+  // Ensure we have at least html or text body
+  if (mailOptions.html) {
+    payload.htmlbody = mailOptions.html;
+  }
+
+  if (mailOptions.text) {
+    payload.textbody = mailOptions.text;
+  }
+
+  // ZeptoMail requires at least one body (html or text)
+  if (!payload.htmlbody && !payload.textbody) {
+    throw new Error('ZeptoMail requires either htmlbody or textbody');
+  }
+
+  // If only HTML is provided, create a plain text fallback
+  if (payload.htmlbody && !payload.textbody) {
+    // Strip HTML tags for plain text version
+    payload.textbody = payload.htmlbody
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .trim();
+  }
+
+  try {
+    // Log payload structure (without sensitive content) for debugging
+    logger.info('ZeptoMail payload prepared', {
+      from: payload.from,
+      toCount: payload.to?.length || 0,
+      toStructure: payload.to?.[0] ? {
+        hasEmailAddress: !!payload.to[0].email_address,
+        addressFormat: typeof payload.to[0].email_address?.address
+      } : 'empty',
+      hasHtml: !!payload.htmlbody,
+      hasText: !!payload.textbody,
+      htmlLength: payload.htmlbody?.length || 0,
+      textLength: payload.textbody?.length || 0,
+      subject: payload.subject,
+      bounceAddress: payload.bounce_address?.address || 'not set (optional)',
+      payloadKeys: Object.keys(payload)
+    });
+
+    // Use direct fetch instead of zeptomail package to get better error handling
+    const zeptoUrl = config.ZEPTO_URL || 'https://api.zeptomail.in/v1.1/email';
+    
+    if (!config.ZEPTO_TOKEN) {
+      throw new Error('ZEPTO_TOKEN is not configured');
+    }
+    
+    const fullToken = config.ZEPTO_TOKEN.startsWith('Zoho-enczapikey ') 
+      ? config.ZEPTO_TOKEN 
+      : `Zoho-enczapikey ${config.ZEPTO_TOKEN}`;
+
+    const response = await fetch(zeptoUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': fullToken,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      } as HeadersInit,
+      body: JSON.stringify(payload)
+    });
+
+    // Get response text first to handle empty or non-JSON responses
+    const responseText = await response.text();
+    
+    logger.info('ZeptoMail API response', {
+      status: response.status,
+      statusText: response.statusText,
+      responseLength: responseText.length,
+      responsePreview: responseText.substring(0, 200),
+      headers: Object.fromEntries(response.headers.entries())
+    });
+
+    // Check if response is successful
+    if (!response.ok) {
+      let errorMessage = `ZeptoMail API error: ${response.status} ${response.statusText}`;
+      let errorDetails: any = {};
+      
+      try {
+        const errorData = JSON.parse(responseText);
+        errorDetails = errorData;
+        
+        // Extract specific error information
+        if (errorData.error) {
+          const apiError = errorData.error;
+          errorMessage = `ZeptoMail API error (${apiError.code || 'UNKNOWN'}): ${apiError.message || 'Unknown error'}`;
+          
+          // Check for specific error codes and provide helpful messages
+          if (apiError.details && Array.isArray(apiError.details)) {
+            const bounceError = apiError.details.find((d: any) => d.target === 'bounce_address');
+            if (bounceError) {
+              errorMessage += `\n\n❌ BOUNCE ADDRESS ERROR: ${bounceError.message}`;
+              errorMessage += `\n   Current bounce address: ${payload.bounce_address?.address || 'not set'}`;
+              errorMessage += `\n   Solution: Remove ZEPTO_BOUNCE_EMAIL from .env (bounce address is optional)`;
+              errorMessage += `\n   OR verify the bounce address in ZeptoMail dashboard → Email Configuration → Bounce Address`;
+            }
+            
+            const authError = apiError.details.find((d: any) => d.target === 'authorization' || apiError.code === 'TM_4001');
+            if (authError || apiError.code === 'TM_4001') {
+              errorMessage += `\n\n⚠️ AUTHENTICATION ERROR: Check your ZEPTO_TOKEN`;
+              errorMessage += `\n   Make sure the token is correct and includes "Zoho-enczapikey " prefix`;
+            }
+          }
+        } else {
+          errorMessage += ` - ${JSON.stringify(errorData)}`;
+        }
+      } catch {
+        errorMessage += ` - Response: ${responseText.substring(0, 500)}`;
+      }
+      
+      logger.error('ZeptoMail API error details', {
+        status: response.status,
+        errorDetails,
+        bounceAddress: payload.bounce_address?.address,
+        fromAddress: payload.from?.address
+      });
+      
+      throw new Error(errorMessage);
+    }
+
+    // Parse JSON response if available
+    let result: any = { success: true };
+    if (responseText.trim().length > 0) {
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        // If response is empty or not JSON, but status is OK, consider it success
+        logger.warn('ZeptoMail returned non-JSON response but status is OK', {
+          responseText: responseText.substring(0, 200)
+        });
+        result = { success: true, message: 'Email sent (empty response)' };
+      }
+    }
+    
+    logger.info('ZeptoMail email sent successfully', {
+      result: result || 'success',
+      hasData: !!result?.data
+    });
+    
+    return result;
+  } catch (error: any) {
+    // Enhanced error logging for ZeptoMail
+    const errorDetails: any = {
+      error: error?.message || error,
+      errorType: error?.type,
+      errorCode: error?.code,
+      errorName: error?.name,
+      payload: {
+        from: payload.from,
+        toCount: payload.to?.length || 0,
+        subject: payload.subject,
+        hasHtml: !!payload.htmlbody,
+        hasText: !!payload.textbody,
+        bounceAddress: payload.bounce_address?.address
+      },
+      zeptoUrl: config.ZEPTO_URL || 'https://api.zeptomail.in/v1.1/email',
+      tokenConfigured: !!config.ZEPTO_TOKEN,
+      tokenLength: config.ZEPTO_TOKEN?.length || 0,
+      bounceAddress: config.ZEPTO_BOUNCE_EMAIL || 'not set (optional)'
+    };
+
+    // If it's a fetch/network error, add more details
+    if (error?.type === 'invalid-json' || error?.message?.includes('JSON') || error?.message?.includes('fetch')) {
+      errorDetails.suggestion = 'ZeptoMail API returned invalid or empty response. Check API token and endpoint configuration.';
+      errorDetails.checkToken = 'Verify ZEPTO_TOKEN is correct and includes "Zoho-enczapikey " prefix';
+      errorDetails.checkUrl = `Current URL: ${config.ZEPTO_URL || 'https://api.zeptomail.in/v1.1/email'}`;
+      errorDetails.checkBounce = `Bounce address: ${config.ZEPTO_BOUNCE_EMAIL || 'NOT SET'}`;
+    }
+
+    logger.error('ZeptoMail send error', errorDetails);
+    
+    // Re-throw with more context
+    throw new Error(`ZeptoMail send failed: ${error?.message || error}. Check logs for details.`);
+  }
+};
+
+const sendEmail = async (mailOptions: nodemailer.SendMailOptions) => {
+  if (zeptoClient) {
+    return sendEmailViaZepto(mailOptions);
+  }
+  if (transporter) {
+    return transporter.sendMail(mailOptions);
+  }
+  throw new Error('Email transporter is not configured');
 };
 
 /**
@@ -155,18 +509,16 @@ export const sendOtp = async (email: string, otp: string, purpose: string = 'Sig
   logger.info('sendOtp called', { 
     email, 
     purpose,
-    hasTransporter: !!transporter,
+    hasTransporter: hasEmailTransport(),
     hasEmail: !!email,
-    transporterType: transporter ? 'nodemailer' : 'null'
+    transporterType: getActiveEmailProviderLabel()
   });
   
-  if (!transporter) {
-    logger.error('OTP email FAILED: Transporter is null', { 
+  if (!hasEmailTransport()) {
+    logger.error('OTP email FAILED: Email provider is not configured', { 
       email, 
       purpose,
-      isEmailEnabled: config.isEmailEnabled(),
-      NODEMAILER_EMAIL: config.NODEMAILER_EMAIL ? 'SET' : 'NOT SET',
-      NODEMAILER_PASSWORD: config.NODEMAILER_PASSWORD ? 'SET' : 'NOT SET'
+      isEmailEnabled: config.isEmailEnabled()
     });
     throw new Error('Email transporter is not configured');
   }
@@ -204,20 +556,20 @@ export const sendOtp = async (email: string, otp: string, purpose: string = 'Sig
   };
 
   try {
-    logger.info('Sending OTP email via transporter', { 
+    logger.info('Sending OTP email via provider', { 
       email, 
       purpose,
-      from: mailOptions.from,
+      from: mailOptions.from || getFromAddress().address,
       subject: mailOptions.subject
     });
     
-    const result = await transporter.sendMail(mailOptions);
+    const result = await sendEmail(mailOptions);
     
     logger.info('OTP email sent successfully', { 
       email, 
       purpose,
-      messageId: result.messageId,
-      response: result.response
+      provider: getActiveEmailProviderLabel(),
+      result
     });
     
     return result;
@@ -242,7 +594,7 @@ export const sendOtp = async (email: string, otp: string, purpose: string = 'Sig
 
 // Send booking confirmation to customer
 export const sendBookingConfirmation = async (booking: IServiceBooking) => {
-  if (!transporter || !(booking as any).email) {
+  if (!hasEmailTransport() || !(booking as any).email) {
     logger.info('Email not configured or no email provided', { 
       bookingId: booking.service_booking_id 
     });
@@ -297,7 +649,7 @@ export const sendBookingConfirmation = async (booking: IServiceBooking) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Booking confirmation email sent', { email: (booking as any).email });
   } catch (error) {
     logger.error('Error sending confirmation email:', error);
@@ -312,7 +664,7 @@ export const sendBookingUpdate = async (
   newDate: Date,
   newTime: string
 ) => {
-  if (!transporter || !(booking as any).email) {
+  if (!hasEmailTransport() || !(booking as any).email) {
     logger.info('Email not configured or no email provided', { 
       bookingId: booking.service_booking_id 
     });
@@ -351,7 +703,7 @@ export const sendBookingUpdate = async (
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Booking update email sent', { email: (booking as any).email });
   } catch (error) {
     logger.error('Error sending update email:', error);
@@ -360,7 +712,7 @@ export const sendBookingUpdate = async (
 
 // Send booking status update to customer
 export const sendStatusUpdate = async (booking: IServiceBooking, newStatus: string) => {
-  if (!transporter || !(booking as any).email) {
+  if (!hasEmailTransport() || !(booking as any).email) {
     logger.info('Email not configured or no email provided', { 
       bookingId: booking.service_booking_id 
     });
@@ -426,7 +778,7 @@ export const sendStatusUpdate = async (booking: IServiceBooking, newStatus: stri
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Status update email sent', { email: (booking as any).email, status: newStatus });
   } catch (error) {
     logger.error('Error sending status update email:', error);
@@ -435,7 +787,7 @@ export const sendStatusUpdate = async (booking: IServiceBooking, newStatus: stri
 
 // Send new booking notification to admin
 export const sendAdminNotification = async (booking: IServiceBooking) => {
-  if (!transporter) {
+  if (!hasEmailTransport()) {
     logger.info('Email not configured for admin notification', { 
       bookingId: booking.service_booking_id 
     });
@@ -506,7 +858,7 @@ export const sendAdminNotification = async (booking: IServiceBooking) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Admin notification email sent', { bookingId: booking.service_booking_id });
   } catch (error) {
     logger.error('Error sending admin notification email:', error);
@@ -519,7 +871,7 @@ export const sendServiceBookingEmail = sendAdminNotification;
 
 // Send furniture request confirmation to customer
 export const sendFurnitureRequestConfirmation = async (furnitureForm: any, furniture: any) => {
-  if (!transporter || !furnitureForm.email) {
+  if (!hasEmailTransport() || !furnitureForm.email) {
     logger.info('Email not configured or no email provided', { 
       furnitureFormId: furnitureForm._id 
     });
@@ -568,7 +920,7 @@ export const sendFurnitureRequestConfirmation = async (furnitureForm: any, furni
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Furniture request confirmation email sent', { email: furnitureForm.email });
   } catch (error) {
     logger.error('Error sending furniture request confirmation email:', error);
@@ -576,20 +928,39 @@ export const sendFurnitureRequestConfirmation = async (furnitureForm: any, furni
 };
 
 // Send furniture status update to customer
-export const sendFurnitureStatusUpdate = async (furnitureForm: any, newStatus: string) => {
-  if (!transporter || !furnitureForm.email) {
+export const sendFurnitureStatusUpdate = async (furnitureForm: any, newStatus: string, furniture?: any) => {
+  if (!hasEmailTransport() || !furnitureForm.email) {
     logger.info('Email not configured or no email provided', { 
       furnitureFormId: furnitureForm._id 
     });
     return;
   }
 
+  // Fetch furniture details if not provided
+  let furnitureDetails = furniture;
+  if (!furnitureDetails && furnitureForm.furniture_id) {
+    try {
+      const Furniture = require('../models/Furniture').default;
+      furnitureDetails = await Furniture.findOne({ furniture_id: furnitureForm.furniture_id });
+    } catch (error) {
+      logger.warn('Could not fetch furniture details for email', { furniture_id: furnitureForm.furniture_id });
+    }
+  }
+
+  const furnitureName = furnitureDetails?.name || furnitureForm.furniture_id;
+  const furnitureCategory = furnitureDetails?.category || 'N/A';
+
   const statusMessages: { [key: string]: string } = {
     'Requested': 'Your furniture request has been received.',
     'Accepted': 'Your furniture request has been accepted! We will contact you shortly.',
     'Ongoing': 'Your furniture is being prepared.',
     'Completed': 'Your furniture request has been completed. We hope you enjoy your new furniture!',
-    'Cancelled': 'Your furniture request has been cancelled.'
+    'Cancelled': 'Your furniture request has been cancelled.',
+    'Ordered': 'Your furniture order has been placed.',
+    'Confirmed': 'Your furniture order has been confirmed!',
+    'Scheduled Delivery': 'Your furniture delivery has been scheduled.',
+    'Out for Delivery': 'Your furniture is out for delivery!',
+    'Delivered': 'Your furniture has been delivered. We hope you enjoy it!'
   };
 
   const content = `
@@ -600,8 +971,18 @@ export const sendFurnitureStatusUpdate = async (furnitureForm: any, newStatus: s
       <h3 style="color: #1e40af; margin: 0 0 15px 0; font-size: 18px;">Request Details</h3>
       <table style="width: 100%; border-collapse: collapse;">
         <tr>
-          <td style="padding: 8px 0; color: #6b7280; font-size: 14px; width: 40%;"><strong>Item ID:</strong></td>
-          <td style="padding: 8px 0; color: #374151; font-size: 14px; font-weight: 600;">${furnitureForm.furniture_id}</td>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px; width: 40%;"><strong>Furniture:</strong></td>
+          <td style="padding: 8px 0; color: #374151; font-size: 14px; font-weight: 600;">${furnitureName}</td>
+        </tr>
+        ${furnitureDetails?.category ? `
+        <tr>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px;"><strong>Category:</strong></td>
+          <td style="padding: 8px 0; color: #374151; font-size: 14px;">${furnitureCategory}</td>
+        </tr>
+        ` : ''}
+        <tr>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px;"><strong>Item ID:</strong></td>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 12px;">${furnitureForm.furniture_id}</td>
         </tr>
         <tr>
           <td style="padding: 8px 0; color: #6b7280; font-size: 14px;"><strong>Type:</strong></td>
@@ -622,13 +1003,13 @@ export const sendFurnitureStatusUpdate = async (furnitureForm: any, newStatus: s
   const mailOptions = {
     from: config.NODEMAILER_EMAIL,
     to: furnitureForm.email,
-    subject: 'Furniture Request Status Update - ' + furnitureForm.furniture_id,
+    subject: `Furniture Request Status Update - ${furnitureName}`,
     html: getEmailTemplate(content, 'Furniture Request Status Update')
   };
 
   try {
-    await transporter.sendMail(mailOptions);
-    logger.info('Furniture status update email sent', { email: furnitureForm.email, status: newStatus });
+    await sendEmail(mailOptions);
+    logger.info('Furniture status update email sent', { email: furnitureForm.email, status: newStatus, furnitureName });
   } catch (error) {
     logger.error('Error sending furniture status update email:', error);
   }
@@ -638,7 +1019,7 @@ export const sendFurnitureStatusUpdate = async (furnitureForm: any, newStatus: s
 
 // Send property request confirmation to customer
 export const sendPropertyRequestConfirmation = async (propertyForm: any, property: any) => {
-  if (!transporter || !propertyForm.email) {
+  if (!hasEmailTransport() || !propertyForm.email) {
     logger.info('Email not configured or no email provided', { 
       propertyFormId: propertyForm._id 
     });
@@ -693,7 +1074,7 @@ export const sendPropertyRequestConfirmation = async (propertyForm: any, propert
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Property request confirmation email sent', { email: propertyForm.email });
   } catch (error) {
     logger.error('Error sending property request confirmation email:', error);
@@ -702,7 +1083,7 @@ export const sendPropertyRequestConfirmation = async (propertyForm: any, propert
 
 // Send property request status update to customer
 export const sendPropertyStatusUpdate = async (propertyForm: any, newStatus: string) => {
-  if (!transporter || !propertyForm.email) {
+  if (!hasEmailTransport() || !propertyForm.email) {
     logger.info('Email not configured or no email provided', { 
       propertyFormId: propertyForm._id 
     });
@@ -748,7 +1129,7 @@ export const sendPropertyStatusUpdate = async (propertyForm: any, newStatus: str
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Property status update email sent', { email: propertyForm.email, status: newStatus });
   } catch (error) {
     logger.error('Error sending property status update email:', error);
@@ -759,7 +1140,7 @@ export const sendPropertyStatusUpdate = async (propertyForm: any, newStatus: str
 
 // Send rental confirmation to customer
 export const sendRentalConfirmation = async (rental: any) => {
-  if (!transporter || !rental.customer_email) {
+  if (!hasEmailTransport() || !rental.customer_email) {
     logger.info('Email not configured or no email provided', { 
       rentalId: rental.rental_id 
     });
@@ -848,7 +1229,7 @@ export const sendRentalConfirmation = async (rental: any) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Rental confirmation email sent', { email: rental.customer_email, rentalId: rental.rental_id });
   } catch (error) {
     logger.error('Error sending rental confirmation email:', error);
@@ -857,7 +1238,7 @@ export const sendRentalConfirmation = async (rental: any) => {
 
 // Send payment reminder to customer
 export const sendPaymentReminder = async (rental: any, paymentRecord: any, daysUntilDue: number) => {
-  if (!transporter || !rental.customer_email) {
+  if (!hasEmailTransport() || !rental.customer_email) {
     logger.info('Email not configured or no email provided', { 
       rentalId: rental.rental_id 
     });
@@ -938,7 +1319,7 @@ export const sendPaymentReminder = async (rental: any, paymentRecord: any, daysU
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Payment reminder email sent', { 
       email: rental.customer_email, 
       rentalId: rental.rental_id,
@@ -957,7 +1338,7 @@ export const sendComprehensivePaymentReminder = async (
   overduePayments: any[],
   paymentLink?: string // Razorpay payment link (optional, for future use)
 ) => {
-  if (!transporter || !rental.customer_email) {
+  if (!hasEmailTransport() || !rental.customer_email) {
     logger.info('Email not configured or no email provided', { 
       rentalId: rental.rental_id 
     });
@@ -1162,7 +1543,7 @@ export const sendComprehensivePaymentReminder = async (
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Comprehensive payment reminder email sent', { 
       email: rental.customer_email, 
       rentalId: rental.rental_id,
@@ -1178,7 +1559,7 @@ export const sendComprehensivePaymentReminder = async (
 
 // Send overdue payment reminder
 export const sendOverduePaymentReminder = async (rental: any, paymentRecord: any, daysOverdue: number) => {
-  if (!transporter || !rental.customer_email) {
+  if (!hasEmailTransport() || !rental.customer_email) {
     logger.info('Email not configured or no email provided', { 
       rentalId: rental.rental_id 
     });
@@ -1265,7 +1646,7 @@ export const sendOverduePaymentReminder = async (rental: any, paymentRecord: any
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Overdue payment reminder email sent', { 
       email: rental.customer_email, 
       rentalId: rental.rental_id,
@@ -1279,7 +1660,7 @@ export const sendOverduePaymentReminder = async (rental: any, paymentRecord: any
 
 // Send payment confirmation
 export const sendPaymentConfirmation = async (rental: any, paymentRecord: any) => {
-  if (!transporter || !rental.customer_email) {
+  if (!hasEmailTransport() || !rental.customer_email) {
     logger.info('Email not configured or no email provided', { 
       rentalId: rental.rental_id 
     });
@@ -1364,7 +1745,7 @@ export const sendPaymentConfirmation = async (rental: any, paymentRecord: any) =
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Payment confirmation email sent', { 
       email: rental.customer_email, 
       rentalId: rental.rental_id,
@@ -1377,7 +1758,7 @@ export const sendPaymentConfirmation = async (rental: any, paymentRecord: any) =
 
 // Send rental status update
 export const sendRentalStatusUpdate = async (rental: any, oldStatus: string, newStatus: string) => {
-  if (!transporter || !rental.customer_email) {
+  if (!hasEmailTransport() || !rental.customer_email) {
     logger.info('Email not configured or no email provided', { 
       rentalId: rental.rental_id 
     });
@@ -1461,7 +1842,7 @@ export const sendRentalStatusUpdate = async (rental: any, oldStatus: string, new
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Rental status update email sent', { 
       email: rental.customer_email, 
       rentalId: rental.rental_id,
@@ -1481,7 +1862,7 @@ export const sendInvoiceEmail = async (
   invoiceData: InvoiceData,
   transactionId: string
 ) => {
-  if (!transporter || !customerEmail) {
+  if (!hasEmailTransport() || !customerEmail) {
     logger.info('Email not configured or no email provided', { 
       transactionId,
       hasEmail: !!customerEmail
@@ -1538,7 +1919,7 @@ export const sendInvoiceEmail = async (
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
     logger.info('Invoice email sent successfully', { 
       email: customerEmail, 
       invoiceNumber: invoiceData.invoiceNumber,

@@ -638,9 +638,11 @@ export const updateFurnitureFormStatus = async (req: AuthRequest, res: Response)
     // Send status update email
     if (furnitureForm && furnitureForm.email) {
       try {
+        // Get furniture details if not already fetched
+        const furnitureForEmail = furniture || await Furniture.findOne({ furniture_id: furnitureForm.furniture_id });
         sendEmailInBackground(
           'Furniture status update',
-          () => sendFurnitureStatusUpdate(furnitureForm, status),
+          () => sendFurnitureStatusUpdate(furnitureForm, status, furnitureForEmail),
           { email: furnitureForm.email, furnitureFormId: furnitureForm._id, status }
         );
       } catch (emailError) {
@@ -768,9 +770,11 @@ export const updateFurnitureForm = async (req: AuthRequest, res: Response) => {
           // Send status update email
           if (furnitureForm.email) {
             try {
+              // Fetch furniture details for email
+              const furnitureForEmail = await Furniture.findOne({ furniture_id: furnitureForm.furniture_id });
               sendEmailInBackground(
                 'Furniture status update',
-                () => sendFurnitureStatusUpdate(furnitureForm, updateData.status!),
+                () => sendFurnitureStatusUpdate(furnitureForm, updateData.status!, furnitureForEmail),
                 { email: furnitureForm.email, furnitureFormId: furnitureForm._id, status: updateData.status }
               );
             } catch (emailError) {

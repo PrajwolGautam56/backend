@@ -7,6 +7,15 @@ This guide explains how to configure Nodemailer for sending emails (rental remin
 Add these to your `.env` file (for local development) or Railway Variables (for production):
 
 ```env
+# Primary HTTP email provider (ZeptoMail)
+EMAIL_PROVIDER=zepto
+ZEPTO_TOKEN=Zoho-enczapikey YOUR_TOKEN_HERE
+ZEPTO_FROM_EMAIL=no-reply@brokerin.in
+ZEPTO_FROM_NAME=BrokerIn
+# ZEPTO_BOUNCE_EMAIL is optional - only include if you have a verified bounce address
+# ZEPTO_BOUNCE_EMAIL=bounce@brokerin.in
+
+# Optional SMTP fallback (only needed if you want to keep SMTP as backup)
 NODEMAILER_EMAIL=no-reply@brokerin.in
 NODEMAILER_PASSWORD=m1yXE3xhim2x
 NODEMAILER_SMTP_HOST=smtp.zoho.in
@@ -26,11 +35,14 @@ NODEMAILER_SMTP_SECURE=false
 1. **Create/Edit `.env` file** in the root directory:
    ```bash
    # Add these lines
-   NODEMAILER_EMAIL=no-reply@brokerin.in
-   NODEMAILER_PASSWORD=m1yXE3xhim2x
-   NODEMAILER_SMTP_HOST=smtp.zoho.in
-   NODEMAILER_SMTP_PORT=587
-   NODEMAILER_SMTP_SECURE=false
+   EMAIL_PROVIDER=zepto
+   ZEPTO_TOKEN=Zoho-enczapikey YOUR_TOKEN_HERE
+   ZEPTO_FROM_EMAIL=no-reply@brokerin.in
+   ZEPTO_FROM_NAME=BrokerIn
+   # ZEPTO_BOUNCE_EMAIL is optional - only include if you have a verified bounce address
+   # ZEPTO_BOUNCE_EMAIL=bounce@brokerin.in
+   NODEMAILER_EMAIL=no-reply@brokerin.in          # optional fallback
+   NODEMAILER_PASSWORD=m1yXE3xhim2x               # optional fallback
    ```
 
 2. **Restart your development server:**
@@ -52,11 +64,12 @@ NODEMAILER_SMTP_SECURE=false
 1. **Go to Railway Dashboard** → Your Service → Variables
 
 2. **Add Environment Variables:**
-   - `NODEMAILER_EMAIL` = `no-reply@brokerin.in`
-   - `NODEMAILER_PASSWORD` = `m1yXE3xhim2x` (no spaces)
-   - `NODEMAILER_SMTP_HOST` = `smtp.zoho.in`
-   - `NODEMAILER_SMTP_PORT` = `587`
-   - `NODEMAILER_SMTP_SECURE` = `false`
+   - `EMAIL_PROVIDER` = `zepto`
+   - `ZEPTO_TOKEN` = *(ZeptoMail send mail token)*
+   - `ZEPTO_FROM_EMAIL` = `no-reply@brokerin.in` *(or your verified sender email)*
+   - `ZEPTO_FROM_NAME` = `BrokerIn`
+   - `ZEPTO_BOUNCE_EMAIL` = *(optional - only if you have a verified bounce address)*
+   - (Optional fallback) `NODEMAILER_EMAIL`, `NODEMAILER_PASSWORD`, `NODEMAILER_SMTP_HOST`, `NODEMAILER_SMTP_PORT`, `NODEMAILER_SMTP_SECURE`
 
 3. **Redeploy** (Railway will automatically redeploy when variables are added)
 
@@ -95,6 +108,24 @@ After adding the credentials, you can test by:
 
 ## Troubleshooting
 
+### Bounce Address Error (SM_113: Invalid email address)
+
+**Error:** `Invalid email address` for `bounce_address`
+
+**Solution:**
+1. **Remove `ZEPTO_BOUNCE_EMAIL` from your `.env` file** - Bounce address is optional and can be omitted
+2. Restart your server
+
+**OR if you want to use a bounce address:**
+1. Log in to [ZeptoMail Dashboard](https://www.zeptomail.com/)
+2. Navigate to **Email Configuration** → **Bounce Address**
+3. Verify that your bounce address is:
+   - Added to the bounce address list
+   - Verified (check verification status)
+   - Active (not disabled)
+4. Update `ZEPTO_BOUNCE_EMAIL` in your `.env` file to match the verified bounce address
+5. Restart your server
+
 ### Emails Not Sending
 
 1. **Check if email is enabled:**
@@ -113,23 +144,24 @@ After adding the credentials, you can test by:
    - Look for email-related errors
    - Check if transporter is created successfully
 
-### Zoho Mail App Password Setup
+### ZeptoMail API Token Setup
 
-1. Log in to [Zoho Mail Admin Console](https://mailadmin.zoho.com/)
-2. Go to **Security & Compliance** → **App Passwords**
-3. Generate a new password for the `brokerin` app (if needed)
-4. Use the generated password (without spaces) for `NODEMAILER_PASSWORD`
+1. Log in to [ZeptoMail](https://zeptomail.zoho.com/)
+2. Go to **Mail Agents** → select your agent (`brokerin.in`)
+3. Under **Bounce Address**, add/verify an email (e.g., `bounce@brokerin.in`)
+4. Under **Send Mail Tokens**, generate a new token (keep it secure)
+5. Use the copied token value for `ZEPTO_TOKEN`
 
 ## Security Notes
 
 - ⚠️ **Never commit `.env` file** to version control
 - ⚠️ **Never share app passwords** publicly
-- ⚠️ **Use App Passwords** instead of regular mailbox password
+- ⚠️ **Treat Zepto tokens like passwords** – rotate periodically
 - ⚠️ **Rotate passwords** periodically for security
 
 ## Current Configuration
 
-- **Email Service:** Zoho Mail (via Nodemailer)
+- **Email Service:** ZeptoMail HTTP API (primary) with optional SMTP fallback
 - **Email Address:** no-reply@brokerin.in
 - **Status:** Ready to use (once credentials are added to environment)
 
