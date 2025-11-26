@@ -13,6 +13,17 @@ if (config.isEmailEnabled()) {
   const smtpSecure = typeof config.NODEMAILER_SMTP_SECURE !== 'undefined'
     ? config.NODEMAILER_SMTP_SECURE === 'true'
     : smtpPort === 465;
+  const connectionTimeout = config.NODEMAILER_SMTP_CONNECTION_TIMEOUT
+    ? parseInt(config.NODEMAILER_SMTP_CONNECTION_TIMEOUT, 10)
+    : 15000;
+  const greetingTimeout = config.NODEMAILER_SMTP_GREETING_TIMEOUT
+    ? parseInt(config.NODEMAILER_SMTP_GREETING_TIMEOUT, 10)
+    : 10000;
+  const socketTimeout = config.NODEMAILER_SMTP_SOCKET_TIMEOUT
+    ? parseInt(config.NODEMAILER_SMTP_SOCKET_TIMEOUT, 10)
+    : 20000;
+  const enableSmtpDebug = config.NODEMAILER_SMTP_DEBUG === 'true';
+  const enableSmtpLogger = enableSmtpDebug || config.NODEMAILER_SMTP_LOGGER === 'true';
 
   transporter = nodemailer.createTransport({
     host: smtpHost,
@@ -25,8 +36,33 @@ if (config.isEmailEnabled()) {
     },
     tls: {
       minVersion: 'TLSv1.2'
-    }
+    },
+    connectionTimeout,
+    greetingTimeout,
+    socketTimeout,
+    logger: enableSmtpLogger,
+    debug: enableSmtpDebug
   });
+
+  transporter.verify()
+    .then(() => {
+      logger.info('SMTP transporter verified', {
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure,
+        connectionTimeout,
+        greetingTimeout,
+        socketTimeout
+      });
+    })
+    .catch((error) => {
+      logger.error('SMTP transporter verification failed', {
+        error: error?.message || error,
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure
+      });
+    });
 }
 
 // Company Information
