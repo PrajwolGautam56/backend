@@ -112,7 +112,7 @@ router.get('/:id', getPropertyById);
  *                 enum: [Rent, Sell]
  *               parking:
  *                 type: string
- *                 enum: [Public, Reserved]
+ *                 enum: [Public, Reserved, Covered]
  *               property_type:
  *                 type: string
  *                 enum: [Residential, Commercial, PG Hostel]

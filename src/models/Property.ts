@@ -37,7 +37,7 @@ const PropertySchema = new Schema<IProperty>({
   },
   parking: { 
     type: String, 
-    enum: ['Public', 'Reserved'],
+    enum: ['Public', 'Reserved', 'Covered'],
     required: false 
   },
   property_type: {

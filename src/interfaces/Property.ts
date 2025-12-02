@@ -13,7 +13,7 @@ export interface IProperty extends Document {
   bathrooms?: number;
   bedrooms?: number;
   listing_type?: 'Rent' | 'Sell';
-  parking?: 'Public' | 'Reserved';
+  parking?: 'Public' | 'Reserved' | 'Covered';
   property_type?: 'Residential' | 'Commercial' | 'PG Hostel';
   location?: string;
   price?: {

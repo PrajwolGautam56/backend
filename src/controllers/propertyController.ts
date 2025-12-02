@@ -45,7 +45,7 @@ export const getProperties = async (req: Request, res: Response) => {
     if (req.query.furnishing && ['Full', 'Semi', 'None'].includes(req.query.furnishing as string)) {
       query.furnishing = req.query.furnishing;
     }
-    if (req.query.parking && ['Public', 'Reserved'].includes(req.query.parking as string)) {
+    if (req.query.parking && ['Public', 'Reserved', 'Covered'].includes(req.query.parking as string)) {
       query.parking = req.query.parking;
     }
     if (req.query.status && ['Available', 'Sold'].includes(req.query.status as string)) {
@@ -103,6 +103,26 @@ export const getPropertyById = async (req: Request, res: Response) => {
     if (!property) {
       return res.status(404).json({ message: 'Property not found' });
     }
+    
+    // Clean up invalid photo URLs before returning
+    if (property.photos && Array.isArray(property.photos)) {
+      const originalCount = property.photos.length;
+      const cleanedPhotos = cleanPhotoUrls(property.photos);
+      if (cleanedPhotos.length !== originalCount) {
+        // Update the property in database if photos were cleaned
+        await propertiesCollection.updateOne(
+          { _id: new mongoose.Types.ObjectId(req.params.id) },
+          { $set: { photos: cleanedPhotos } }
+        );
+        property.photos = cleanedPhotos;
+        logger.info('Cleaned invalid photo URLs from property:', {
+          propertyId: req.params.id,
+          originalCount: originalCount,
+          cleanedCount: cleanedPhotos.length
+        });
+      }
+    }
+    
     res.json(property);
   } catch (error) {
     logger.error('Error fetching property:', error);
@@ -134,22 +154,53 @@ const uploadToCloudinary = async (file: Express.Multer.File, propertyName: strin
   }
 };
 
+// Helper function to validate photo URL
+const isValidPhotoUrl = (url: any): boolean => {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') return false;
+  // Check if it's a valid URL (http/https)
+  try {
+    const urlObj = new URL(trimmed);
+    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+// Helper function to filter and clean photo URLs array
+const cleanPhotoUrls = (urls: any[]): string[] => {
+  if (!Array.isArray(urls)) return [];
+  return urls
+    .filter(url => isValidPhotoUrl(url))
+    .map(url => url.trim())
+    .filter((url, index, self) => self.indexOf(url) === index); // Remove duplicates
+};
+
 // Helper function to delete photo from Cloudinary
 const deletePhotoFromCloudinary = async (photoUrl: string) => {
   try {
+    if (!photoUrl || typeof photoUrl !== 'string') {
+      logger.warn('Invalid photo URL provided for deletion:', photoUrl);
+      return null;
+    }
+
+    // Normalize URL (remove query parameters, handle http/https)
+    const normalizedUrl = photoUrl.split('?')[0].trim();
+    
     // Extract public_id from Cloudinary URL
     // URL format: https://res.cloudinary.com/{cloud_name}/image/upload/{version}/{folder}/{public_id}.{format}
     // Or: https://res.cloudinary.com/{cloud_name}/image/upload/{folder}/{public_id}.{format}
     
     // Find the index of 'upload' in the URL
-    const uploadIndex = photoUrl.indexOf('/upload/');
+    const uploadIndex = normalizedUrl.indexOf('/upload/');
     if (uploadIndex === -1) {
-      logger.warn('Invalid Cloudinary URL format:', photoUrl);
+      logger.warn('Invalid Cloudinary URL format (no /upload/ found):', normalizedUrl);
       return null;
     }
     
     // Get the part after /upload/
-    const pathAfterUpload = photoUrl.substring(uploadIndex + '/upload/'.length);
+    const pathAfterUpload = normalizedUrl.substring(uploadIndex + '/upload/'.length);
     
     // Remove version if present (format: v1234567890/)
     const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
@@ -157,11 +208,40 @@ const deletePhotoFromCloudinary = async (photoUrl: string) => {
     // Remove file extension
     const publicIdWithFolder = pathWithoutVersion.replace(/\.[^/.]+$/, '');
     
+    if (!publicIdWithFolder) {
+      logger.warn('Could not extract public_id from URL:', normalizedUrl);
+      return null;
+    }
+    
+    logger.info('Attempting to delete from Cloudinary:', { 
+      photoUrl: normalizedUrl, 
+      publicId: publicIdWithFolder 
+    });
+    
     const result = await cloudinary.uploader.destroy(publicIdWithFolder);
-    logger.info('Deleted photo from Cloudinary:', { photoUrl, publicId: publicIdWithFolder, result });
+    
+    // Check if deletion was successful
+    if (result.result === 'ok' || result.result === 'not found') {
+      logger.info('Successfully deleted photo from Cloudinary:', { 
+        photoUrl: normalizedUrl, 
+        publicId: publicIdWithFolder, 
+        result: result.result 
+      });
+    } else {
+      logger.warn('Cloudinary deletion returned unexpected result:', { 
+        photoUrl: normalizedUrl, 
+        publicId: publicIdWithFolder, 
+        result 
+      });
+    }
+    
     return result;
-  } catch (error) {
-    logger.error('Error deleting photo from Cloudinary:', { photoUrl, error });
+  } catch (error: any) {
+    logger.error('Error deleting photo from Cloudinary:', { 
+      photoUrl, 
+      error: error?.message || error,
+      stack: error?.stack 
+    });
     // Don't throw - continue even if deletion fails
     return null;
   }
@@ -321,74 +401,352 @@ export const updateProperty = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
+    logger.info('Update property request received:', {
+      propertyId: id,
+      bodyKeys: Object.keys(req.body),
+      bodySample: Object.keys(req.body).reduce((acc: any, key) => {
+        const value = req.body[key];
+        if (Array.isArray(value)) {
+          acc[key] = `[Array(${value.length})]`;
+        } else if (typeof value === 'string' && value.length > 100) {
+          acc[key] = value.substring(0, 100) + '...';
+        } else {
+          acc[key] = value;
+        }
+        return acc;
+      }, {}),
+      hasFiles: !!req.files,
+      fileCount: req.files && Array.isArray(req.files) ? req.files.length : 0,
+      filesType: req.files ? (Array.isArray(req.files) ? 'array' : typeof req.files) : 'none'
+    });
+
     // Fetch existing property first
     const existingProperty = await Property.findById(id);
     if (!existingProperty) {
       return res.status(404).json({ message: 'Property not found' });
     }
 
-    // Handle photo updates:
-    // 1. If req.body.photos is provided (array of URLs), use it as the base (allows deletion)
-    // 2. Upload new photos from req.files and append them
-    // 3. Delete photos from Cloudinary that were removed
-    
-    const existingPhotos = existingProperty.photos || [];
-    let finalPhotoUrls: string[] = [];
-    
-    // If photos array is provided in body, use it (frontend sends list of photos to keep)
-    if (req.body.photos !== undefined) {
-      if (Array.isArray(req.body.photos)) {
-        finalPhotoUrls = req.body.photos;
-      } else if (typeof req.body.photos === 'string') {
-        // Handle single photo URL as string
-        finalPhotoUrls = [req.body.photos];
+    // Helper function to parse FormData values
+    const parseValue = (value: any, fieldName: string): any => {
+      if (value === undefined || value === null || value === '') {
+        return undefined;
       }
-    } else {
-      // If no photos array in body, keep all existing photos
-      finalPhotoUrls = [...existingPhotos];
-    }
-    
-    // Upload new photos if provided and append to the list
-    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
-      const uploadPromises = (req.files as Express.Multer.File[]).map(
-        (file, index) => uploadToCloudinary(file, existingProperty.name || 'property', Date.now() + index)
-      );
-      const newPhotoUrls = await Promise.all(uploadPromises);
-      finalPhotoUrls = [...finalPhotoUrls, ...newPhotoUrls];
-      logger.info('New photos uploaded:', { newCount: newPhotoUrls.length });
-    }
-    
-    // Find photos that were removed (in existing but not in final list)
-    const photosToDelete = existingPhotos.filter(photo => !finalPhotoUrls.includes(photo));
-    
-    // Delete removed photos from Cloudinary
-    if (photosToDelete.length > 0) {
-      logger.info('Deleting photos from Cloudinary:', { count: photosToDelete.length, photos: photosToDelete });
-      await Promise.all(photosToDelete.map(photo => deletePhotoFromCloudinary(photo)));
-    }
-    
-    logger.info('Photos updated:', { 
-      existingCount: existingPhotos.length, 
-      finalCount: finalPhotoUrls.length,
-      deletedCount: photosToDelete.length,
-      newUploadedCount: req.files && Array.isArray(req.files) ? req.files.length : 0
-    });
-
-    // Build update data - exclude photos from req.body to avoid conflicts
-    const { photos, ...otherBodyFields } = req.body;
-    const updateData: Partial<IProperty> = {
-      updatedBy: req.userId,
-      updatedAt: new Date(),
-      ...otherBodyFields,
-      photos: finalPhotoUrls
+      
+      // Handle arrays (amenities, existingPhotos, etc.)
+      if (Array.isArray(value)) {
+        return value.filter(v => v !== '' && v !== null && v !== undefined);
+      }
+      
+      // Handle string arrays from FormData (existingPhotos[] format)
+      if (typeof value === 'string' && fieldName.includes('[]')) {
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed.filter(v => v !== '' && v !== null && v !== undefined) : [parsed];
+        } catch {
+          return [value].filter(v => v !== '' && v !== null && v !== undefined);
+        }
+      }
+      
+      // Handle numbers
+      const numberFields = ['size', 'bhk', 'bathrooms', 'bedrooms'];
+      if (numberFields.includes(fieldName)) {
+        const num = Number(value);
+        return isNaN(num) ? undefined : num;
+      }
+      
+      // Handle booleans
+      if (fieldName === 'pets_allowed') {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'string') {
+          return value.toLowerCase() === 'true' || value === '1';
+        }
+        return Boolean(value);
+      }
+      
+      // Handle nested price object
+      if (fieldName.startsWith('price[')) {
+        const num = Number(value);
+        return isNaN(num) ? undefined : num;
+      }
+      
+      return value;
     };
 
-    // Handle nested address updates
-    if (req.body.address) {
+    // Parse FormData body - handle nested objects and arrays
+    const parsedBody: any = {};
+    
+    // Handle existingPhotos array (can come as existingPhotos[] or existingPhotos)
+    // Multer/express may parse arrays differently, so check all possible formats
+    let existingPhotosArray: string[] = [];
+    
+    // Check for existingPhotos[] (array format from FormData)
+    if (req.body['existingPhotos[]']) {
+      const arr = Array.isArray(req.body['existingPhotos[]']) 
+        ? req.body['existingPhotos[]'] 
+        : [req.body['existingPhotos[]']];
+      existingPhotosArray = cleanPhotoUrls(arr);
+      logger.info('Found existingPhotos[]:', { count: existingPhotosArray.length });
+    }
+    
+    // Check for existingPhotos (single value or array)
+    if (req.body.existingPhotos) {
+      if (Array.isArray(req.body.existingPhotos)) {
+        const arr = cleanPhotoUrls(req.body.existingPhotos);
+        if (arr.length > 0) {
+          existingPhotosArray = arr;
+          logger.info('Found existingPhotos (array):', { count: existingPhotosArray.length });
+        }
+      } else if (typeof req.body.existingPhotos === 'string') {
+        try {
+          const parsed = JSON.parse(req.body.existingPhotos);
+          if (Array.isArray(parsed)) {
+            existingPhotosArray = cleanPhotoUrls(parsed);
+            logger.info('Found existingPhotos (JSON array):', { count: existingPhotosArray.length });
+          } else {
+            const cleaned = cleanPhotoUrls([req.body.existingPhotos]);
+            if (cleaned.length > 0) {
+              existingPhotosArray = cleaned;
+              logger.info('Found existingPhotos (single string):', { count: 1 });
+            }
+          }
+        } catch {
+          const cleaned = cleanPhotoUrls([req.body.existingPhotos]);
+          if (cleaned.length > 0) {
+            existingPhotosArray = cleaned;
+            logger.info('Found existingPhotos (single string, not JSON):', { count: 1 });
+          }
+        }
+      }
+    }
+    
+    // Check all body keys for array patterns (multer might parse differently)
+    const arrayKeys = Object.keys(req.body).filter(key => 
+      key.includes('existingPhotos') || key.includes('existing_photos')
+    );
+    if (arrayKeys.length > 0 && existingPhotosArray.length === 0) {
+      logger.info('Found potential existingPhotos keys:', arrayKeys);
+      // Try to collect from all matching keys
+      const allPhotos: any[] = [];
+      arrayKeys.forEach(key => {
+        const value = req.body[key];
+        if (Array.isArray(value)) {
+          allPhotos.push(...value);
+        } else if (typeof value === 'string' && value.trim()) {
+          allPhotos.push(value);
+        }
+      });
+      if (allPhotos.length > 0) {
+        existingPhotosArray = cleanPhotoUrls(allPhotos);
+        logger.info('Collected existingPhotos from all keys:', { count: existingPhotosArray.length });
+      }
+    }
+    
+    logger.info('Final existingPhotosArray:', { 
+      count: existingPhotosArray.length,
+      photos: existingPhotosArray.slice(0, 3) // Log first 3 for debugging
+    });
+
+    // Handle price object
+    const price: any = {};
+    if (req.body['price[rent_monthly]']) {
+      const val = parseValue(req.body['price[rent_monthly]'], 'price[rent_monthly]');
+      if (val !== undefined) price.rent_monthly = val;
+    }
+    if (req.body['price[sell_price]']) {
+      const val = parseValue(req.body['price[sell_price]'], 'price[sell_price]');
+      if (val !== undefined) price.sell_price = val;
+    }
+    if (req.body['price[deposit]']) {
+      const val = parseValue(req.body['price[deposit]'], 'price[deposit]');
+      if (val !== undefined) price.deposit = val;
+    }
+    
+    // Handle address object
+    const address: any = {};
+    if (req.body['address[street]']) address.street = req.body['address[street]'];
+    if (req.body['address[city]']) address.city = req.body['address[city]'];
+    if (req.body['address[state]']) address.state = req.body['address[state]'];
+    if (req.body['address[country]']) address.country = req.body['address[country]'];
+    
+    // Handle amenities array
+    let amenities: string[] = [];
+    if (req.body.amenities) {
+      if (Array.isArray(req.body.amenities)) {
+        amenities = req.body.amenities.filter((a: any) => a && a.trim() !== '');
+      } else if (typeof req.body.amenities === 'string') {
+        try {
+          const parsed = JSON.parse(req.body.amenities);
+          amenities = Array.isArray(parsed) ? parsed.filter((a: any) => a && a.trim() !== '') : [parsed];
+        } catch {
+          amenities = req.body.amenities.trim() ? [req.body.amenities] : [];
+        }
+      }
+    }
+    if (req.body['amenities[]']) {
+      const arr = Array.isArray(req.body['amenities[]']) ? req.body['amenities[]'] : [req.body['amenities[]']];
+      amenities = arr.filter((a: any) => a && a.trim() !== '');
+    }
+
+    // Handle location_coordinates
+    const location_coordinates: any = {};
+    if (req.body['location_coordinates[latitude]']) {
+      const lat = Number(req.body['location_coordinates[latitude]']);
+      if (!isNaN(lat)) location_coordinates.latitude = lat;
+    }
+    if (req.body['location_coordinates[longitude]']) {
+      const lng = Number(req.body['location_coordinates[longitude]']);
+      if (!isNaN(lng)) location_coordinates.longitude = lng;
+    }
+
+    // Build update data with proper type conversions
+    const updateData: any = {
+      updatedAt: new Date()
+    };
+    
+    if (req.userId) {
+      updateData.updatedBy = req.userId;
+    }
+
+    // Add simple fields with type conversion
+    const simpleFields = ['name', 'description', 'type', 'location', 'society', 'zipcode', 
+                          'furnishing', 'availability', 'building_type', 'listing_type', 
+                          'parking', 'property_type', 'status'];
+    
+    for (const field of simpleFields) {
+      if (req.body[field] !== undefined && req.body[field] !== null && req.body[field] !== '') {
+        updateData[field] = req.body[field];
+      }
+    }
+
+    // Add number fields
+    const numberFields = ['size', 'bhk', 'bathrooms', 'bedrooms'];
+    for (const field of numberFields) {
+      if (req.body[field] !== undefined && req.body[field] !== null && req.body[field] !== '') {
+        const num = Number(req.body[field]);
+        if (!isNaN(num)) updateData[field] = num;
+      }
+    }
+
+    // Add boolean fields
+    if (req.body.pets_allowed !== undefined && req.body.pets_allowed !== null && req.body.pets_allowed !== '') {
+      updateData.pets_allowed = parseValue(req.body.pets_allowed, 'pets_allowed');
+    }
+
+    // Add nested objects if they have values
+    if (Object.keys(price).length > 0) {
+      updateData.price = {
+        ...existingProperty.price,
+        ...price
+      };
+    }
+    
+    if (Object.keys(address).length > 0) {
       updateData.address = {
         ...existingProperty.address,
-        ...req.body.address
+        ...address
       };
+    }
+    
+    if (Object.keys(location_coordinates).length > 0) {
+      updateData.location_coordinates = {
+        ...existingProperty.location_coordinates,
+        ...location_coordinates
+      };
+    }
+    
+    if (amenities.length > 0) {
+      updateData.amenities = amenities;
+    }
+
+    // Handle photo updates
+    // First, clean existing photos in database (remove any invalid/empty URLs)
+    const existingPhotos = cleanPhotoUrls(existingProperty.photos || []);
+    const hasNewPhotos = req.files && Array.isArray(req.files) && req.files.length > 0;
+    const hasExistingPhotosParam = existingPhotosArray.length > 0;
+    
+    // Only process photos if:
+    // 1. existingPhotos[] is explicitly sent (user wants to manage photos)
+    // 2. OR new photos are being uploaded
+    // Otherwise, don't touch photos at all
+    if (hasExistingPhotosParam || hasNewPhotos) {
+      let finalPhotoUrls: string[] = [];
+      
+      // Use existingPhotos array if provided, otherwise keep all existing (cleaned)
+      if (hasExistingPhotosParam) {
+        finalPhotoUrls = existingPhotosArray; // Already cleaned
+      } else {
+        finalPhotoUrls = [...existingPhotos]; // Already cleaned
+      }
+      
+      logger.info('Photo update processing:', {
+        existingPhotosCount: existingPhotos.length,
+        photosToKeepCount: finalPhotoUrls.length,
+        hasExistingPhotos: hasExistingPhotosParam,
+        newFilesCount: hasNewPhotos ? (req.files as Express.Multer.File[]).length : 0
+      });
+      
+      // Upload new photos if provided and append to the list
+      if (hasNewPhotos) {
+        const uploadPromises = (req.files as Express.Multer.File[]).map(
+          (file, index) => uploadToCloudinary(file, existingProperty.name || 'property', Date.now() + index)
+        );
+        const newPhotoUrls = await Promise.all(uploadPromises);
+        // Filter out any failed uploads (null/undefined URLs)
+        const validNewUrls = newPhotoUrls.filter(url => isValidPhotoUrl(url));
+        finalPhotoUrls = [...finalPhotoUrls, ...validNewUrls];
+        logger.info('New photos uploaded:', { 
+          newCount: validNewUrls.length,
+          failedCount: newPhotoUrls.length - validNewUrls.length
+        });
+      }
+      
+      // Helper function to normalize URLs for comparison
+      const normalizeUrl = (url: string) => {
+        if (!url) return '';
+        return url.split('?')[0].trim().replace(/^http:/, 'https:');
+      };
+      
+      // Find photos that were removed (only if existingPhotos was sent)
+      if (hasExistingPhotosParam) {
+        const normalizedFinalUrls = finalPhotoUrls.map(normalizeUrl);
+        const photosToDelete = existingPhotos.filter(photo => {
+          if (!isValidPhotoUrl(photo)) return false; // Skip invalid photos
+          const normalizedPhoto = normalizeUrl(photo);
+          return !normalizedFinalUrls.includes(normalizedPhoto);
+        });
+        
+        // Delete removed photos from Cloudinary
+        if (photosToDelete.length > 0) {
+          logger.info('Deleting photos from Cloudinary:', { count: photosToDelete.length, photos: photosToDelete });
+          const deletionResults = [];
+          for (const photo of photosToDelete) {
+            const result = await deletePhotoFromCloudinary(photo);
+            deletionResults.push({ photo, result });
+          }
+          logger.info('Photo deletion completed:', { 
+            total: photosToDelete.length,
+            results: deletionResults.map(r => ({ 
+              photo: r.photo, 
+              success: r.result?.result === 'ok' || r.result?.result === 'not found' 
+            }))
+          });
+        }
+      }
+      
+      // Final cleanup: remove any invalid URLs and duplicates
+      finalPhotoUrls = cleanPhotoUrls(finalPhotoUrls);
+      
+      // Update photos array (only if we have valid photos)
+      if (finalPhotoUrls.length > 0) {
+        updateData.photos = finalPhotoUrls;
+      } else {
+        // If no valid photos, set empty array
+        updateData.photos = [];
+        logger.info('No valid photos after cleanup - setting empty array');
+      }
+    } else {
+      logger.info('No photo updates - keeping existing photos unchanged');
+      // Don't add photos to updateData - MongoDB won't update them
     }
 
     // Auto-geocode address if coordinates are not provided but address is updated
@@ -406,25 +764,92 @@ export const updateProperty = async (req: AuthRequest, res: Response) => {
           logger.info('Auto-geocoded address on update:', geocodeResult);
         }
       } catch (error) {
-        logger.warn('Failed to auto-geocode address on update (frontend can handle this):', error);
-        // Don't fail property update if geocoding fails
+        logger.warn('Failed to auto-geocode address on update:', error);
       }
     }
 
-    const property = await Property.findByIdAndUpdate(
-      id,
+    // Log what will be updated
+    logger.info('Update data prepared:', {
+      updateKeys: Object.keys(updateData),
+      updateDataSample: Object.keys(updateData).reduce((acc: any, key) => {
+        const value = updateData[key];
+        if (Array.isArray(value)) {
+          acc[key] = `[Array(${value.length})]`;
+        } else if (typeof value === 'object' && value !== null) {
+          acc[key] = `{${Object.keys(value).join(', ')}}`;
+        } else if (typeof value === 'string' && value.length > 50) {
+          acc[key] = value.substring(0, 50) + '...';
+        } else {
+          acc[key] = value;
+        }
+        return acc;
+      }, {})
+    });
+
+    // Use native MongoDB update to bypass Mongoose validation issues
+    const db = mongoose.connection.db;
+    if (!db) {
+      throw new Error('Database connection not available');
+    }
+    
+    const propertiesCollection = db.collection('properties');
+    
+    // Convert id to ObjectId
+    let objectId;
+    try {
+      objectId = new mongoose.Types.ObjectId(id);
+    } catch (error) {
+      logger.error('Invalid property ID format:', { id, error });
+      return res.status(400).json({ message: 'Invalid property ID format' });
+    }
+    
+    logger.info('Attempting MongoDB update:', {
+      propertyId: id,
+      objectId: objectId.toString(),
+      updateDataKeys: Object.keys(updateData)
+    });
+    
+    const result = await propertiesCollection.findOneAndUpdate(
+      { _id: objectId },
       { $set: updateData },
-      { new: true, runValidators: true }
+      { returnDocument: 'after' }
     );
 
-    logger.info('Property updated successfully', { propertyId: id });
-    return res.status(200).json(property);
-  } catch (error:any) {
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({ message: error.message });
+    if (!result || !result.value) {
+      logger.warn('Property not found after update attempt:', { propertyId: id });
+      return res.status(404).json({ message: 'Property not found' });
     }
-    logger.error('Update property error:', error);
-    return res.status(500).json({ message: 'Error updating property' });
+
+    const updatedProperty = result.value as any;
+
+    logger.info('Property updated successfully', { 
+      propertyId: id,
+      updatedFields: Object.keys(updateData),
+      resultHasPhotos: !!updatedProperty.photos,
+      resultPhotoCount: updatedProperty.photos?.length || 0
+    });
+    
+    return res.status(200).json(updatedProperty);
+  } catch (error: any) {
+    logger.error('Update property error:', {
+      error: error.message,
+      stack: error.stack,
+      name: error.name,
+      body: req.body
+    });
+    
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        message: 'Validation error', 
+        error: error.message,
+        details: error.errors 
+      });
+    }
+    
+    return res.status(500).json({ 
+      message: 'Error updating property',
+      error: error.message 
+    });
   }
 };
 
