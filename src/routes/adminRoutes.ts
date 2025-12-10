@@ -9,6 +9,24 @@ const router = express.Router();
 
 router.use(authenticateToken, isAdmin);
 
+// Dashboard
+router.get('/dashboard/overview', adminController.getDashboardOverview);
+
+// Settings
+router.get('/settings', adminController.getSettings);
+router.put('/settings', adminController.updateSettings);
+router.post('/settings/test-email', adminController.testEmail);
+router.post('/settings/test-payment', adminController.testPayment);
+
+// Analytics
+router.get('/analytics/revenue', adminController.getRevenueAnalytics);
+router.get('/analytics/users', adminController.getUserAnalytics);
+router.get('/analytics/properties', adminController.getPropertyAnalytics);
+router.get('/analytics/furniture', adminController.getFurnitureAnalytics);
+router.get('/analytics/services', adminController.getServiceAnalytics);
+router.get('/analytics/rentals', adminController.getRentalAnalytics);
+
+// Properties
 router.post('/properties', upload.array('images', 10), adminController.addProperty);
 router.put('/properties/:id', upload.array('images', 10), adminController.updateProperty);
 router.delete('/properties/:id', adminController.deleteProperty);
