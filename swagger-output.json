@@ -1,0 +1,86 @@
+Swagger searching in paths: [
+  '/Users/rajkasaudhan/Documents/raj/backend-brokerIn/dist/routes/*.ts',
+  '/Users/rajkasaudhan/Documents/raj/backend-brokerIn/dist/controllers/*.ts'
+]
+Current NODE_ENV: undefined
+Resolved routes path: /Users/rajkasaudhan/Documents/raj/backend-brokerIn/dist/routes/*.ts
+Resolved controllers path: /Users/rajkasaudhan/Documents/raj/backend-brokerIn/dist/controllers/*.ts
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Flat Brokerage API Documentation",
+    "version": "1.0.0",
+    "description": "API documentation for Flat Brokerage application",
+    "contact": {
+      "name": "API Support",
+      "email": "support@brokerin.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3030",
+      "description": "Development server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profilePicture": {
+            "type": "string"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Authentication",
+      "description": "Authentication endpoints"
+    },
+    {
+      "name": "Admin",
+      "description": "Admin management endpoints"
+    },
+    {
+      "name": "Services",
+      "description": "Service management endpoints"
+    }
+  ],
+  "paths": {}
+}
