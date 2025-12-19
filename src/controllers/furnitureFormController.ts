@@ -89,6 +89,7 @@ const createRentalFromFurnitureDelivery = async (furnitureForm: any, adminUserId
       items,
       total_monthly_amount: monthlyPrice,
       total_deposit: deposit,
+      order_source: 'form', // Mark rentals created from furniture delivery form
       start_date: rentalStartDate,
       status: RentalStatus.ACTIVE,
       payment_records: [],

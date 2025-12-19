@@ -1,60 +1,35 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export enum RentalStatus {
-  ACTIVE = 'Active',
-  COMPLETED = 'Completed',
-  CANCELLED = 'Cancelled',
-  ON_HOLD = 'On Hold'
-}
-
-export enum PaymentStatus {
-  PENDING = 'Pending',
-  PAID = 'Paid',
-  OVERDUE = 'Overdue',
-  PARTIAL = 'Partial'
-}
-
 export enum OrderStatus {
   PENDING = 'Pending', // Order placed, awaiting processing
   PROCESSING = 'Processing', // Order is being processed
   CONFIRMED = 'Confirmed', // Order confirmed, ready for delivery
   OUT_FOR_DELIVERY = 'Out for Delivery', // Items are being delivered
-  DELIVERED = 'Delivered', // Items delivered, rental active
+  DELIVERED = 'Delivered', // Items delivered
   CANCELLED = 'Cancelled', // Order cancelled
   REFUNDED = 'Refunded' // Order refunded
 }
 
 export enum PaymentMethod {
   COD = 'COD', // Cash on Delivery
-  ONLINE = 'Online', // Online payment (future)
+  ONLINE = 'Online', // Online payment
   BANK_TRANSFER = 'Bank Transfer',
   UPI = 'UPI',
   CARD = 'Card'
 }
 
-export interface IPaymentRecord extends Document {
-  month: string; // Format: "YYYY-MM" (e.g., "2024-11")
-  amount: number;
-  dueDate: Date;
-  paidDate?: Date;
-  status: PaymentStatus;
-  paymentMethod?: string;
-  notes?: string;
-}
-
-export interface IRentalItem {
+export interface IOrderItem {
   product_id?: string; // Reference to furniture/product
   product_name: string;
   product_type?: 'Furniture' | 'Appliance' | 'Electronic' | 'Other';
   quantity: number;
   monthly_price: number;
   deposit: number;
-  start_date: Date;
-  end_date?: Date;
+  photos?: string[];
 }
 
-export interface IRental extends Document {
-  rental_id: string; // Auto-generated unique ID
+export interface IOrder extends Document {
+  order_id: string; // Auto-generated unique ID (e.g., ORDER-2024-1104-A1B2C3)
   customer_name: string;
   customer_email: string;
   customer_phone: string;
@@ -65,43 +40,21 @@ export interface IRental extends Document {
     zipcode?: string;
     country?: string;
   };
-  userId?: Schema.Types.ObjectId; // Link to User if email matches
-  items: IRentalItem[];
+  userId?: Schema.Types.ObjectId; // Link to User
+  items: IOrderItem[];
   total_monthly_amount: number; // Sum of all items' monthly prices
   total_deposit: number; // Sum of all deposits
   delivery_charge?: number; // Delivery charge
-  start_date: Date;
-  end_date?: Date;
-  status: RentalStatus;
   order_status: OrderStatus; // Order processing status
-  order_source?: string; // 'cart' | 'admin' | 'form' | 'system' (where this rental came from)
   payment_method?: PaymentMethod; // Payment method used
-  payment_records: IPaymentRecord[];
   notes?: string;
-  createdBy?: Schema.Types.ObjectId; // Admin who created this
-  updatedBy?: Schema.Types.ObjectId; // Admin who last updated
-  last_reminder_sent_at?: Date; // Track when the last reminder was sent
   order_placed_at?: Date; // When order was placed
   order_confirmed_at?: Date; // When order was confirmed
   delivery_date?: Date; // Scheduled delivery date
   delivered_at?: Date; // Actual delivery date
 }
 
-const PaymentRecordSchema = new Schema<IPaymentRecord>({
-  month: { type: String, required: true },
-  amount: { type: Number, required: true },
-  dueDate: { type: Date, required: true },
-  paidDate: { type: Date },
-  status: {
-    type: String,
-    enum: Object.values(PaymentStatus),
-    default: PaymentStatus.PENDING
-  },
-  paymentMethod: { type: String },
-  notes: { type: String }
-}, { _id: true });
-
-const RentalItemSchema = new Schema<IRentalItem>({
+const OrderItemSchema = new Schema<IOrderItem>({
   product_id: { type: String },
   product_name: { type: String, required: true },
   product_type: {
@@ -111,16 +64,15 @@ const RentalItemSchema = new Schema<IRentalItem>({
   quantity: { type: Number, required: true, default: 1 },
   monthly_price: { type: Number, required: true },
   deposit: { type: Number, required: true, default: 0 },
-  start_date: { type: Date, required: true },
-  end_date: { type: Date }
+  photos: [{ type: String }]
 }, { _id: false });
 
-const RentalSchema = new Schema<IRental>({
-  rental_id: {
+const OrderSchema = new Schema<IOrder>({
+  order_id: {
     type: String,
     required: false, // Will be auto-generated in pre-save hook
     unique: true,
-    default: undefined // Explicitly set default to undefined
+    default: undefined
   },
   customer_name: { type: String, required: true },
   customer_email: { type: String, required: true },
@@ -137,22 +89,10 @@ const RentalSchema = new Schema<IRental>({
     ref: 'User',
     required: false
   },
-  items: [RentalItemSchema],
+  items: [OrderItemSchema],
   total_monthly_amount: { type: Number, required: true },
   total_deposit: { type: Number, required: true, default: 0 },
   delivery_charge: { type: Number, default: 0 },
-  order_source: {
-    type: String,
-    enum: ['cart', 'admin', 'form', 'system'],
-    default: 'admin'
-  },
-  start_date: { type: Date, required: true },
-  end_date: { type: Date },
-  status: {
-    type: String,
-    enum: Object.values(RentalStatus),
-    default: RentalStatus.ACTIVE
-  },
   order_status: {
     type: String,
     enum: Object.values(OrderStatus),
@@ -162,22 +102,7 @@ const RentalSchema = new Schema<IRental>({
     type: String,
     enum: Object.values(PaymentMethod)
   },
-  payment_records: [PaymentRecordSchema],
   notes: { type: String },
-  createdBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: false
-  },
-  updatedBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: false
-  },
-  last_reminder_sent_at: {
-    type: Date,
-    required: false
-  },
   order_placed_at: {
     type: Date,
     default: Date.now
@@ -193,13 +118,13 @@ const RentalSchema = new Schema<IRental>({
   }
 }, {
   timestamps: true,
-  validateBeforeSave: true // Keep validation, but rental_id will be set before save
+  validateBeforeSave: true
 });
 
-// Pre-save middleware to generate rental_id (only if not provided)
-RentalSchema.pre('save', async function(next) {
-  // Generate rental_id if not provided
-  if (!this.rental_id) {
+// Pre-save middleware to generate order_id (only if not provided)
+OrderSchema.pre('save', async function(next) {
+  // Generate order_id if not provided
+  if (!this.order_id) {
     const date = new Date();
     const year = date.getFullYear();
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -207,8 +132,8 @@ RentalSchema.pre('save', async function(next) {
     const crypto = require('crypto');
     const randomString = crypto.randomBytes(3).toString('hex').toUpperCase();
     
-    // Format: RENT-2024-1104-A1B2C3
-    this.rental_id = `RENT-${year}-${month}${day}-${randomString}`;
+    // Format: ORDER-2024-1104-A1B2C3
+    this.order_id = `ORDER-${year}-${month}${day}-${randomString}`;
   }
   
   // Auto-link to user if email matches
@@ -230,15 +155,16 @@ RentalSchema.pre('save', async function(next) {
 });
 
 // Index for faster queries
-RentalSchema.index({ customer_email: 1 });
-RentalSchema.index({ userId: 1 });
-RentalSchema.index({ status: 1 });
-RentalSchema.index({ rental_id: 1 });
+OrderSchema.index({ customer_email: 1 });
+OrderSchema.index({ userId: 1 });
+OrderSchema.index({ order_status: 1 });
+OrderSchema.index({ order_id: 1 });
+OrderSchema.index({ order_placed_at: -1 });
 
 // Delete existing model if it exists (to clear cache)
-if (mongoose.models.Rental) {
-  delete mongoose.models.Rental;
+if (mongoose.models.Order) {
+  delete mongoose.models.Order;
 }
 
-export default mongoose.model<IRental>('Rental', RentalSchema);
+export default mongoose.model<IOrder>('Order', OrderSchema);
 

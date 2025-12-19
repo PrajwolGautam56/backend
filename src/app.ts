@@ -23,6 +23,7 @@ import cartRoutes from './routes/cartRoutes';
 import wishlistRoutes from './routes/wishlistRoutes';
 import reviewRoutes from './routes/reviewRoutes';
 import promoCodeRoutes from './routes/promoCodeRoutes';
+import orderRoutes from './routes/orderRoutes';
 import cron from 'node-cron';
 import User from './models/User'; // Adjust the import based on your file structure
 import { checkAndSendPaymentReminders } from './utils/rentalReminders';
@@ -76,6 +77,7 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/promo-codes', promoCodeRoutes);
+app.use('/api/orders', orderRoutes);
 
 // Swagger Documentation with custom options
 app.use('/api-docs', swaggerUi.serve);

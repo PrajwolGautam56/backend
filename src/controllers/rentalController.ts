@@ -27,7 +27,7 @@ const linkRentalToUser = async (email: string): Promise<mongoose.Types.ObjectId 
   }
 };
 
-// Create a new rental (Admin only)
+// Create a new rental (Admin only / offline rental management)
 export const createRental = async (req: AuthRequest, res: Response) => {
   try {
     const {
@@ -80,7 +80,7 @@ export const createRental = async (req: AuthRequest, res: Response) => {
 
     logger.info('Generated rental_id:', rental_id);
 
-    // Create rental
+    // Create rental (admin/offline)
     const rentalData: any = {
       rental_id: rental_id, // MUST be set - validation runs before pre-save hook
       customer_name,
@@ -103,6 +103,7 @@ export const createRental = async (req: AuthRequest, res: Response) => {
       end_date,
       status: RentalStatus.ACTIVE,
       order_status: OrderStatus.PENDING, // Default to pending for admin-created rentals
+      order_source: req.body.order_source || 'admin', // Explicitly mark as admin/offline rental
       payment_method: req.body.payment_method || PaymentMethod.COD,
       payment_records: [],
       notes,
@@ -356,6 +357,7 @@ export const getRentals = async (req: Request, res: Response) => {
     const {
       status,
       order_status,
+      order_source,
       customer_email,
       search,
       page = '1',
@@ -376,6 +378,11 @@ export const getRentals = async (req: Request, res: Response) => {
 
     if (order_status) {
       query.order_status = order_status;
+    }
+
+    if (order_source) {
+      // If a specific source is requested (e.g. 'cart'), only return that
+      query.order_source = order_source;
     }
 
     if (customer_email) {
@@ -1390,7 +1397,7 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ message: 'Admin access required' });
     }
 
-    // Get all active rentals
+    // Get all active rentals (both offline/admin and cart)
     const activeRentals = await Rental.find({ status: RentalStatus.ACTIVE });
     
     // Calculate statistics
@@ -1403,7 +1410,7 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
     const monthlyPayments: Record<string, { month: string; total: number; count: number }> = {};
     const duesBreakdown: any[] = [];
     
-    // Order status statistics
+    // Order status statistics - ONLY from Order collection (cart orders), NOT from Rental
     const orderStatusStats: Record<string, number> = {
       [OrderStatus.PENDING]: 0,
       [OrderStatus.PROCESSING]: 0,
@@ -1414,11 +1421,21 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
       [OrderStatus.REFUNDED]: 0
     };
 
+    // Get order stats from Order collection (cart orders only)
+    try {
+      const Order = (await import('../models/Order')).default;
+      const allOrders = await Order.find({});
+      allOrders.forEach(order => {
+        const orderStatus = order.order_status || OrderStatus.PENDING;
+        orderStatusStats[orderStatus] = (orderStatusStats[orderStatus] || 0) + 1;
+      });
+    } catch (error) {
+      logger.warn('Could not fetch order stats from Order collection:', error);
+    }
+
     activeRentals.forEach(rental => {
       try {
-        // Count order status
-        const orderStatus = rental.order_status || OrderStatus.PENDING;
-        orderStatusStats[orderStatus] = (orderStatusStats[orderStatus] || 0) + 1;
+        // Skip order status counting - orders are in separate Order collection
         
         // Count rented items
         if (rental.items && Array.isArray(rental.items)) {
@@ -2147,8 +2164,8 @@ export const getOrderStatusStats = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ message: 'Admin access required' });
     }
 
-    // Get all rentals
-    const allRentals = await Rental.find({});
+    // Get all rentals that come from cart checkout only (treat these as \"orders\")
+    const allRentals = await Rental.find({ order_source: 'cart' });
 
     const stats: Record<string, number> = {
       [OrderStatus.PENDING]: 0,

@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../interfaces/Request';
 import Cart, { ICartItem } from '../models/Cart';
 import Furniture from '../models/Furniture';
-import Rental, { OrderStatus, PaymentMethod, RentalStatus } from '../models/Rental';
+import Order, { OrderStatus, PaymentMethod } from '../models/Order';
 import User from '../models/User';
 import logger from '../utils/logger';
 import mongoose from 'mongoose';
@@ -463,6 +463,7 @@ export const checkout = async (req: AuthRequest, res: Response) => {
       customer_email,
       customer_phone,
       customer_address,
+      delivery_address, // Accept both for compatibility
       start_date,
       end_date,
       payment_method = PaymentMethod.COD,
@@ -565,62 +566,64 @@ export const checkout = async (req: AuthRequest, res: Response) => {
       0
     );
 
-    // Generate rental_id
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const day = date.getDate().toString().padStart(2, '0');
-    const crypto = require('crypto');
-    const randomString = crypto.randomBytes(3).toString('hex').toUpperCase();
-    const rental_id = `RENT-${year}-${month}${day}-${randomString}`;
-
-    // Create rental order
-    const rentalData: any = {
-      rental_id,
+    // Create Order document (cart checkout) - separate from Rental collection
+    const orderData: any = {
       customer_name: customer_name || user.fullName,
       customer_email: customer_email || user.email,
       customer_phone: customer_phone || user.phoneNumber,
-      items: validatedItems,
+      items: validatedItems.map(item => ({
+        product_id: item.product_id,
+        product_name: item.product_name,
+        product_type: item.product_type || 'Furniture',
+        quantity: item.quantity,
+        monthly_price: item.monthly_price,
+        deposit: item.deposit,
+        photos: cart.items.find(ci => ci.product_id === item.product_id)?.photos || []
+      })),
       total_monthly_amount,
       total_deposit,
       delivery_charge: cart.delivery_charge || 0,
-      start_date: start_date ? new Date(start_date) : new Date(),
-      end_date: end_date ? new Date(end_date) : undefined,
-      status: RentalStatus.ACTIVE,
       order_status: OrderStatus.PENDING, // Order placed, awaiting processing
       payment_method: payment_method || PaymentMethod.COD,
-      payment_records: [],
       notes,
       userId: req.userId,
-      createdBy: req.userId,
-      updatedBy: req.userId,
       order_placed_at: new Date(),
       delivery_date: delivery_date ? new Date(delivery_date) : undefined
     };
 
-    if (customer_address) {
-      rentalData.customer_address = customer_address;
+    logger.info('Checkout initiated', {
+      userId: req.userId,
+      itemCount: validatedItems.length,
+      totalAmount: total_monthly_amount + total_deposit + (cart.delivery_charge || 0)
+    });
+
+    // Accept both customer_address and delivery_address for compatibility
+    // Convert string address to object format
+    const addressInput = customer_address || delivery_address;
+    if (addressInput) {
+      // If address is a string, convert to object format
+      if (typeof addressInput === 'string') {
+        orderData.customer_address = {
+          street: addressInput,
+          city: '',
+          state: '',
+          zipcode: '',
+          country: 'India'
+        };
+      } else {
+        // If it's already an object, use it as is
+        orderData.customer_address = addressInput;
+      }
     }
 
-    // Use native MongoDB to create rental (bypass Mongoose validation issues)
-    const db = mongoose.connection.db;
-    if (!db) {
-      throw new Error('Database connection not ready');
-    }
+    // Create Order document using Mongoose model
+    const order = new Order(orderData);
+    await order.save();
 
-    const rentalsCollection = db.collection('rentals');
-    const result = await rentalsCollection.insertOne(rentalData);
-
-    if (!result.insertedId) {
-      throw new Error('Failed to create rental order');
-    }
-
-    // Fetch the created rental
-    const rental = await Rental.findById(result.insertedId);
-
-    if (!rental) {
-      throw new Error('Rental created but could not be retrieved');
-    }
+    logger.info('Order created successfully', { 
+      order_id: order.order_id,
+      orderId: order._id.toString()
+    });
 
     // Update furniture availability status and stock
     for (const item of validatedItems) {
@@ -656,26 +659,30 @@ export const checkout = async (req: AuthRequest, res: Response) => {
     cart.items = [];
     await cart.save();
 
-    // Send confirmation email in background
+    // Send confirmation email in background (using order data)
+    const orderForEmail: any = {
+      ...order.toObject(),
+      rental_id: order.order_id // Use order_id for email template compatibility
+    };
     sendEmailInBackground(
-      'Rental Confirmation',
-      () => sendRentalConfirmation(rental)
+      'Order Confirmation',
+      () => sendRentalConfirmation(orderForEmail)
     );
 
     logger.info('Checkout successful', {
       userId: req.userId,
-      rental_id: rental.rental_id,
+      order_id: order.order_id,
       items_count: validatedItems.length,
       total_amount: total_monthly_amount + total_deposit + (cart.delivery_charge || 0)
     });
 
     return res.status(201).json({
       message: 'Order placed successfully',
-      rental,
+      order: order.toObject(),
       order_summary: {
-        rental_id: rental.rental_id,
-        order_status: rental.order_status,
-        payment_method: rental.payment_method,
+        order_id: order.order_id,
+        order_status: order.order_status,
+        payment_method: order.payment_method,
         total_monthly: total_monthly_amount,
         total_deposit,
         delivery_charge: cart.delivery_charge || 0,
