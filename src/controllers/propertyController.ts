@@ -546,8 +546,10 @@ export const updateProperty = async (req: AuthRequest, res: Response) => {
       photos: existingPhotosArray.slice(0, 3) // Log first 3 for debugging
     });
 
-    // Handle price object
+    // Handle price object (supports both FormData style and JSON nested object)
     const price: any = {};
+
+    // FormData keys: price[rent_monthly], price[sell_price], price[deposit]
     if (req.body['price[rent_monthly]']) {
       const val = parseValue(req.body['price[rent_monthly]'], 'price[rent_monthly]');
       if (val !== undefined) price.rent_monthly = val;
@@ -559,6 +561,23 @@ export const updateProperty = async (req: AuthRequest, res: Response) => {
     if (req.body['price[deposit]']) {
       const val = parseValue(req.body['price[deposit]'], 'price[deposit]');
       if (val !== undefined) price.deposit = val;
+    }
+
+    // JSON body: price: { rent_monthly, sell_price, deposit }
+    if (req.body.price && typeof req.body.price === 'object') {
+      const jsonPrice = req.body.price as any;
+      if (jsonPrice.rent_monthly !== undefined && jsonPrice.rent_monthly !== null && jsonPrice.rent_monthly !== '') {
+        const val = parseValue(jsonPrice.rent_monthly, 'price[rent_monthly]');
+        if (val !== undefined) price.rent_monthly = val;
+      }
+      if (jsonPrice.sell_price !== undefined && jsonPrice.sell_price !== null && jsonPrice.sell_price !== '') {
+        const val = parseValue(jsonPrice.sell_price, 'price[sell_price]');
+        if (val !== undefined) price.sell_price = val;
+      }
+      if (jsonPrice.deposit !== undefined && jsonPrice.deposit !== null && jsonPrice.deposit !== '') {
+        const val = parseValue(jsonPrice.deposit, 'price[deposit]');
+        if (val !== undefined) price.deposit = val;
+      }
     }
     
     // Handle address object
