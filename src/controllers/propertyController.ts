@@ -139,7 +139,8 @@ const uploadToCloudinary = async (file: Express.Multer.File, propertyName: strin
     
     // Generate filename based on property name
     const sanitizedName = propertyName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-    const filename = `${sanitizedName}-${index + 1}`;
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    const filename = `${sanitizedName}-${index + 1}-${uniqueSuffix}`;
     
     const result = await cloudinary.uploader.upload(dataURI, {
       folder: 'properties',

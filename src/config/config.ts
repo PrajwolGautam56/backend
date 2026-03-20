@@ -11,6 +11,14 @@ const getEnv = (key: string): string => {
 };
 
 const getOptionalEnv = (key: string): string | undefined => process.env[key];
+const getOptionalEnvList = (key: string): string[] => {
+  const value = process.env[key];
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
 
 const getBooleanEnv = (key: string, defaultValue = false): boolean => {
   const value = process.env[key];
@@ -54,6 +62,7 @@ export const config = {
   ZEPTO_BOUNCE_EMAIL: getOptionalEnv('ZEPTO_BOUNCE_EMAIL'),
   GOOGLE_MAPS_API_KEY: getOptionalEnv('GOOGLE_MAPS_API_KEY'),
   FRONTEND_BASE_URL: getOptionalEnv('FRONTEND_BASE_URL') || 'http://localhost:3000',
+  CORS_ORIGINS: getOptionalEnvList('CORS_ORIGINS'),
   // Razorpay configuration
   RAZORPAY_KEY_ID: getOptionalEnv('RAZORPAY_KEY_ID'),
   RAZORPAY_KEY_SECRET: getOptionalEnv('RAZORPAY_KEY_SECRET'),

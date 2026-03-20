@@ -1,10 +1,27 @@
 import express, { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import * as authController from '../controllers/authController';
 import { upload } from '../utils/fileUpload';
 import { authenticateToken } from '../middleware/auth';
 import { isAdmin } from '../middleware/adminAuth';
 
 const router: Router = express.Router();
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 25,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many authentication attempts. Please try again later.' }
+});
+
+const strictOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many OTP attempts. Please try again later.' }
+});
 
 /**
  * @swagger
@@ -104,10 +121,10 @@ const router: Router = express.Router();
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/signup', upload.single('profilePicture'), authController.signup as express.RequestHandler);
+router.post('/signup', authLimiter, upload.single('profilePicture'), authController.signup as express.RequestHandler);
 // New pre-verification routes
-router.post('/pre-signup/request-otp', authController.requestSignupOtp as express.RequestHandler);
-router.post('/pre-signup/verify-otp', authController.verifySignupOtp as express.RequestHandler);
+router.post('/pre-signup/request-otp', strictOtpLimiter, authController.requestSignupOtp as express.RequestHandler);
+router.post('/pre-signup/verify-otp', strictOtpLimiter, authController.verifySignupOtp as express.RequestHandler);
 
 /**
  * @swagger
@@ -155,12 +172,12 @@ router.post('/pre-signup/verify-otp', authController.verifySignupOtp as express.
  *                     name:
  *                       type: string
  */
-router.post('/signin', authController.signin as express.RequestHandler);
+router.post('/signin', authLimiter, authController.signin as express.RequestHandler);
 
 // Forgot password routes
-router.post('/forgot-password', authController.requestPasswordReset as express.RequestHandler);
-router.post('/reset-password/verify', authController.verifyPasswordResetToken as express.RequestHandler);
-router.post('/reset-password', authController.resetPassword as express.RequestHandler);
+router.post('/forgot-password', authLimiter, authController.requestPasswordReset as express.RequestHandler);
+router.post('/reset-password/verify', authLimiter, authController.verifyPasswordResetToken as express.RequestHandler);
+router.post('/reset-password', authLimiter, authController.resetPassword as express.RequestHandler);
 
 /**
  * @swagger
@@ -197,7 +214,7 @@ router.post('/reset-password', authController.resetPassword as express.RequestHa
  *       500:
  *         description: Server error
  */
-router.post('/google-auth', authController.googleAuth as express.RequestHandler);
+router.post('/google-auth', authLimiter, authController.googleAuth as express.RequestHandler);
 
 /**
  * @swagger
@@ -233,7 +250,7 @@ router.post('/google-auth', authController.googleAuth as express.RequestHandler)
  *       500:
  *         description: Server error
  */
-router.post('/refresh-token', authController.refreshToken as express.RequestHandler);
+router.post('/refresh-token', authLimiter, authController.refreshToken as express.RequestHandler);
 
 /**
  * @swagger
@@ -263,7 +280,7 @@ router.post('/refresh-token', authController.refreshToken as express.RequestHand
 router.get('/profile-picture/:filename', authController.getProfilePicture as express.RequestHandler);
 
 // OTP verification route
-router.post('/verify-otp', authController.verifyOtp);
+router.post('/verify-otp', strictOtpLimiter, authController.verifyOtp);
 
 router.get('/check-admin', authenticateToken, isAdmin, (req, res) => {
   return res.status(200).json({ isAdmin: true });

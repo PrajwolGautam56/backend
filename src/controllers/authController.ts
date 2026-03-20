@@ -36,10 +36,11 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
       return res.status(200).json({ message: 'If an account exists, a reset email has been sent.' });
     }
 
-    const token = crypto.randomBytes(20).toString('hex');
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-    user.resetPasswordToken = token;
+    user.resetPasswordToken = tokenHash;
     user.resetPasswordExpires = expires;
     await user.save();
 
@@ -84,7 +85,8 @@ export const verifyPasswordResetToken = async (req: Request, res: Response) => {
     if (!user || !user.resetPasswordToken || !user.resetPasswordExpires) {
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
-    if (user.resetPasswordToken !== token || user.resetPasswordExpires < new Date()) {
+    const providedTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    if (user.resetPasswordToken !== providedTokenHash || user.resetPasswordExpires < new Date()) {
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
     return res.status(200).json({ message: 'Token is valid' });
@@ -105,7 +107,8 @@ export const resetPassword = async (req: Request, res: Response) => {
     if (!user || !user.resetPasswordToken || !user.resetPasswordExpires) {
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
-    if (user.resetPasswordToken !== token || user.resetPasswordExpires < new Date()) {
+    const providedTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    if (user.resetPasswordToken !== providedTokenHash || user.resetPasswordExpires < new Date()) {
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
 
@@ -146,7 +149,7 @@ export const requestSignupOtp = async (req: Request, res: Response) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     // Generate numeric OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const otpExpires = new Date(Date.now() + 20 * 60 * 1000);
 
     await PendingSignup.create({
@@ -183,31 +186,20 @@ export const requestSignupOtp = async (req: Request, res: Response) => {
             errorResponse: emailError?.response,
             stack: emailError?.stack,
             email,
-            otp, // Log OTP for manual verification if email fails
             timestamp: new Date().toISOString()
           });
         });
     } else {
-      logger.warn('RequestSignupOtp: Email not configured; OTP logged', { 
+      logger.warn('RequestSignupOtp: Email not configured', { 
         email, 
-        otp,
         NODEMAILER_EMAIL: config.NODEMAILER_EMAIL ? 'SET' : 'NOT SET',
         NODEMAILER_PASSWORD: config.NODEMAILER_PASSWORD ? 'SET' : 'NOT SET'
       });
     }
 
     // Return response immediately - don't wait for email
-    // TEMPORARY: Include OTP in response for debugging email issues
-    // TODO: Remove this once email delivery is confirmed working
     return res.status(200).json({ 
-      message: 'OTP sent. Please verify to complete registration.',
-      // Include OTP in response for debugging (check server logs if email fails)
-      otp: otp, // TEMPORARY - for debugging email delivery issues
-      debug: {
-        email: email,
-        timestamp: new Date().toISOString(),
-        note: 'Check server logs for email delivery status. OTP included for debugging.'
-      }
+      message: 'OTP sent. Please verify to complete registration.'
     });
   } catch (error) {
     logger.error('Error in requestSignupOtp', { error });
@@ -270,7 +262,7 @@ export const signup = async (req: Request, res: Response) => {
 
     // Create user with OTP and expiration time (6-digit numeric only)
     // Generate a 6-digit numeric OTP (000000 to 999999)
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const otpExpires = new Date(Date.now() + 20 * 60 * 1000); // OTP valid for 20 minutes
 
     const user = new User({
@@ -294,11 +286,11 @@ export const signup = async (req: Request, res: Response) => {
           error: emailError?.message || emailError,
           stack: emailError?.stack,
           email,
-          otp
+          hasOtp: true
         });
       });
     } else {
-      logger.warn('Signup: Email not configured; user will need manual OTP delivery', { email, otp });
+      logger.warn('Signup: Email not configured; user will need manual OTP delivery', { email });
     }
 
     await user.save();
@@ -528,17 +520,28 @@ export const refreshToken = async (req: Request, res: Response) => {
 
 export const getProfilePicture = async (req: Request, res: Response) => {
   try {
-    const { filename } = req.params;
-    const filepath = path.join(__dirname, '../../uploads/profile-pictures', filename);
+    const baseDir = path.resolve(__dirname, '../../uploads/profile-pictures');
+    const inputFilename = String(req.params.filename || '');
+    const filename = path.basename(inputFilename);
+    const safeNamePattern = /^[A-Za-z0-9._-]+$/;
+
+    if (!safeNamePattern.test(filename)) {
+      return res.status(400).json({ message: 'Invalid filename' });
+    }
+
+    const filepath = path.resolve(baseDir, filename);
+    if (!filepath.startsWith(baseDir + path.sep) && filepath !== baseDir) {
+      return res.status(400).json({ message: 'Invalid filename' });
+    }
     
     if (fs.existsSync(filepath)) {
-      res.sendFile(filepath);
+      return res.sendFile(filepath);
     } else {
-      res.sendFile(path.join(__dirname, '../../uploads/profile-pictures/default-profile.png'));
+      return res.sendFile(path.join(baseDir, 'default-profile.png'));
     }
   } catch (error) {
     logger.error('Error serving profile picture', { error });
-    res.status(500).json({ message: 'Error serving profile picture' });
+    return res.status(500).json({ message: 'Error serving profile picture' });
   }
 };
 

@@ -10,8 +10,7 @@ import {
   updateOwnProfile,
   getOwnActivityHistory,
   getOwnDashboard,
-  getUserDetails,
-  testDashboardQuery
+  getUserDetails
 } from '../controllers/userController';
 
 const router = Router();
@@ -28,7 +27,6 @@ router.get('/profile/me', authenticateToken, getOwnProfile); // Get own profile
 router.put('/profile/me', authenticateToken, updateOwnProfile); // Update own profile
 router.get('/profile/activity', authenticateToken, getOwnActivityHistory); // Get own activity history
 router.get('/dashboard/me', authenticateToken, getOwnDashboard); // Get own dashboard
-router.get('/dashboard/test', authenticateToken, testDashboardQuery); // Debug: Test dashboard query
 
 export default router;
 

@@ -32,12 +32,12 @@ export const autoGeneratePaymentRecords = async () => {
         firstPaymentMonth.setDate(1);
         firstPaymentMonth.setHours(0, 0, 0, 0);
 
-        // Calculate current month + 1 month ahead
+        // Calculate up to current month only.
+        // Future months should be generated when their month starts.
         const currentMonth = new Date(today);
         currentMonth.setDate(1);
         currentMonth.setHours(0, 0, 0, 0);
         const maxMonth = new Date(currentMonth);
-        maxMonth.setMonth(maxMonth.getMonth() + 1);
 
         // IMPORTANT: Always start from the rental start month, never before
         let paymentMonth = new Date(firstPaymentMonth);

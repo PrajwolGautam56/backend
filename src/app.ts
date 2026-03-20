@@ -1,6 +1,8 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import { specs } from './config/swagger';  
 import { config } from './config/config';
@@ -25,29 +27,59 @@ import reviewRoutes from './routes/reviewRoutes';
 import promoCodeRoutes from './routes/promoCodeRoutes';
 import orderRoutes from './routes/orderRoutes';
 import cron from 'node-cron';
-import User from './models/User'; // Adjust the import based on your file structure
 import { checkAndSendPaymentReminders } from './utils/rentalReminders';
 import { checkMonthlyRentalPayments } from './utils/monthlyPaymentChecker';
 import { autoGeneratePaymentRecords } from './utils/rentalReminders';
 
 const app = express();
 
-// Enable CORS for all origins
-// Note: credentials: true requires specific origin, not '*'
-// If you need credentials, use: origin: process.env.FRONTEND_BASE_URL || 'http://localhost:3000'
+app.set('trust proxy', 1);
+
+const defaultCorsOrigins = [
+  config.FRONTEND_BASE_URL,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000'
+];
+const allowedOrigins = new Set(
+  [...defaultCorsOrigins, ...config.CORS_ORIGINS].filter(Boolean)
+);
+
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    // Allow server-to-server or curl requests without Origin header.
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, false);
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  credentials: false, // Set to false when using origin: '*'
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Refresh-Token'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range', 'X-New-Access-Token', 'X-New-Refresh-Token'],
+  credentials: false,
   preflightContinue: false,
   optionsSuccessStatus: 204,
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 }));
 
 // Middleware
-app.use(express.json());
+app.use(helmet({
+  crossOriginResourcePolicy: false
+}));
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Logging middleware (move before routes)
 app.use((_req, _res, next) => {

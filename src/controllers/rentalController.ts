@@ -14,6 +14,71 @@ import {
 } from '../utils/email';
 import { sendEmailInBackground } from '../utils/emailDispatcher';
 
+const toMonthKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  return `${year}-${month}`;
+};
+
+const startOfDay = (date: Date): Date => {
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+};
+
+const getPaymentBucket = (
+  payment: any,
+  today: Date
+): 'paid' | 'pending' | 'overdue' | 'future' => {
+  const rawStatus = String(payment?.status || PaymentStatus.PENDING);
+  if (rawStatus === PaymentStatus.PAID || rawStatus === 'Paid') {
+    return 'paid';
+  }
+
+  const currentMonthKey = toMonthKey(today);
+  const paymentMonth = String(payment?.month || '');
+  // Only do lexicographic month comparison for strict YYYY-MM keys.
+  const isIsoMonthKey = /^\d{4}-\d{2}$/.test(paymentMonth);
+  if (isIsoMonthKey && paymentMonth > currentMonthKey) {
+    return 'future';
+  }
+
+  const dueDate = payment?.dueDate ? startOfDay(new Date(payment.dueDate)) : today;
+  if (dueDate < today || rawStatus === PaymentStatus.OVERDUE || rawStatus === 'Overdue') {
+    return 'overdue';
+  }
+
+  return 'pending';
+};
+
+const getEffectivePaymentStatus = (payment: any, today: Date): PaymentStatus => {
+  const rawStatus = String(payment?.status || PaymentStatus.PENDING).toLowerCase();
+  if (rawStatus === String(PaymentStatus.PAID).toLowerCase()) {
+    return PaymentStatus.PAID;
+  }
+  if (rawStatus === String(PaymentStatus.PARTIAL).toLowerCase()) {
+    return PaymentStatus.PARTIAL;
+  }
+  if (rawStatus === String(PaymentStatus.OVERDUE).toLowerCase()) {
+    return PaymentStatus.OVERDUE;
+  }
+
+  const dueDate = payment?.dueDate ? startOfDay(new Date(payment.dueDate)) : today;
+  if (dueDate < today) {
+    return PaymentStatus.OVERDUE;
+  }
+
+  return PaymentStatus.PENDING;
+};
+
+const getStoredPaymentStatus = (payment: any): 'paid' | 'pending' | 'overdue' | 'other' => {
+  const effectiveStatus = getEffectivePaymentStatus(payment, startOfDay(new Date()));
+  if (effectiveStatus === PaymentStatus.PAID) return 'paid';
+  if (effectiveStatus === PaymentStatus.PENDING) return 'pending';
+  if (effectiveStatus === PaymentStatus.OVERDUE) return 'overdue';
+  return 'other';
+};
+
 // Helper to link rental to user by email
 const linkRentalToUser = async (email: string): Promise<mongoose.Types.ObjectId | null> => {
   try {
@@ -268,9 +333,9 @@ const generatePaymentRecords = async (
     currentMonth.setHours(0, 0, 0, 0);
 
     // IMPORTANT: Only generate records from start month onwards (never before)
-    // Generate up to current month + 1 month ahead (for upcoming payments)
+    // Generate only up to current month.
+    // Future months should not appear as pending until their month starts.
     const maxMonth = new Date(currentMonth);
-    maxMonth.setMonth(maxMonth.getMonth() + 1); // One month ahead
 
     // ALWAYS start from the rental start month, never before it
     let paymentMonth = new Date(firstPaymentMonth);
@@ -358,6 +423,7 @@ export const getRentals = async (req: Request, res: Response) => {
       status,
       order_status,
       order_source,
+      exclude_order_source,
       customer_email,
       search,
       page = '1',
@@ -384,6 +450,9 @@ export const getRentals = async (req: Request, res: Response) => {
       // If a specific source is requested (e.g. 'cart'), only return that
       query.order_source = order_source;
     }
+    if (exclude_order_source) {
+      query.order_source = { $ne: exclude_order_source };
+    }
 
     if (customer_email) {
       query.customer_email = { $regex: customer_email, $options: 'i' };
@@ -409,18 +478,22 @@ export const getRentals = async (req: Request, res: Response) => {
       .populate('updatedBy', 'fullName email')
       .sort(sortOptions)
       .skip(skip)
-      .limit(limitNum);
+      .limit(limitNum)
+      .lean();
 
-    // Fix payment months for all rentals
-    const fixedRentals = await Promise.all(
-      rentals.map(async (rental) => {
-        return await fixPaymentMonthForRental(rental);
-      })
-    );
+    const today = startOfDay(new Date());
+    const normalizedRentals = rentals.map((rental: any) => {
+      const paymentRecords = Array.isArray(rental.payment_records) ? rental.payment_records : [];
+      rental.payment_records = paymentRecords.map((payment: any) => ({
+        ...payment,
+        status: getEffectivePaymentStatus(payment, today)
+      }));
+      return rental;
+    });
 
     res.status(200).json({
       success: true,
-      data: fixedRentals,
+      data: normalizedRentals,
       pagination: {
         total,
         page: pageNum,
@@ -471,10 +544,18 @@ export const getRentalById = async (req: Request, res: Response) => {
 
     // Fix payment month if needed
     const fixedRental = await fixPaymentMonthForRental(rental);
+    const rentalObject = typeof (fixedRental as any)?.toObject === 'function'
+      ? (fixedRental as any).toObject()
+      : fixedRental;
+    const today = startOfDay(new Date());
+    rentalObject.payment_records = (rentalObject.payment_records || []).map((payment: any) => ({
+      ...payment,
+      status: getEffectivePaymentStatus(payment, today)
+    }));
 
     res.status(200).json({
       success: true,
-      data: fixedRental
+      data: rentalObject
     });
   } catch (error: any) {
     logger.error('Error fetching rental:', error);
@@ -642,9 +723,11 @@ export const getMyRentals = async (req: AuthRequest, res: Response) => {
         const fixedRental = await fixPaymentMonthForRental(rental);
         
         const paymentRecords = fixedRental.payment_records || [];
-        const pendingPayments = paymentRecords.filter((p: any) => p.status === PaymentStatus.PENDING);
-        const overduePayments = paymentRecords.filter((p: any) => p.status === PaymentStatus.OVERDUE);
-        const paidPayments = paymentRecords.filter((p: any) => p.status === PaymentStatus.PAID);
+        const today = startOfDay(new Date());
+        const pendingPayments = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'pending');
+        const overduePayments = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'overdue');
+        const paidPayments = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'paid');
+        const futurePayments = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'future');
         
         const totalPending = pendingPayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
         const totalOverdue = overduePayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
@@ -660,8 +743,10 @@ export const getMyRentals = async (req: AuthRequest, res: Response) => {
             pending_count: pendingPayments.length,
             overdue_count: overduePayments.length,
             paid_count: paidPayments.length,
+            future_count: futurePayments.length,
             pending_months: pendingPayments.map((p: any) => p.month),
-            overdue_months: overduePayments.map((p: any) => p.month)
+            overdue_months: overduePayments.map((p: any) => p.month),
+            future_months: futurePayments.map((p: any) => p.month)
           }
         };
       })
@@ -706,10 +791,11 @@ export const getPendingOverduePayments = async (req: AuthRequest, res: Response)
 
     const pendingOverduePayments: any[] = [];
 
+    const today = startOfDay(new Date());
     rentals.forEach(rental => {
       const paymentRecords = rental.payment_records || [];
-      const pending = paymentRecords.filter((p: any) => p.status === PaymentStatus.PENDING);
-      const overdue = paymentRecords.filter((p: any) => p.status === PaymentStatus.OVERDUE);
+      const pending = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'pending');
+      const overdue = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'overdue');
 
       if (pending.length > 0 || overdue.length > 0) {
         pendingOverduePayments.push({
@@ -727,7 +813,7 @@ export const getPendingOverduePayments = async (req: AuthRequest, res: Response)
             amount: p.amount,
             dueDate: p.dueDate,
             status: p.status,
-            daysOverdue: Math.floor((new Date().getTime() - new Date(p.dueDate).getTime()) / (1000 * 60 * 60 * 24))
+            daysOverdue: Math.floor((today.getTime() - startOfDay(new Date(p.dueDate)).getTime()) / (1000 * 60 * 60 * 24))
           })),
           total_pending: pending.reduce((sum: number, p: any) => sum + (p.amount || 0), 0),
           total_overdue: overdue.reduce((sum: number, p: any) => sum + (p.amount || 0), 0),
@@ -1297,10 +1383,12 @@ export const sendPaymentReminders = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Get pending and overdue payments
+    // Get actionable pending and overdue payments.
+    // Future month records are intentionally excluded to keep dues clear.
     const paymentRecords = rental.payment_records || [];
-    const pendingPayments = paymentRecords.filter((p: any) => p.status === PaymentStatus.PENDING);
-    const overduePayments = paymentRecords.filter((p: any) => p.status === PaymentStatus.OVERDUE);
+    const today = startOfDay(new Date());
+    const pendingPayments = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'pending');
+    const overduePayments = paymentRecords.filter((p: any) => getPaymentBucket(p, today) === 'overdue');
 
     if (pendingPayments.length === 0 && overduePayments.length === 0) {
       return res.status(400).json({
@@ -1397,8 +1485,15 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ message: 'Admin access required' });
     }
 
-    // Get all active rentals (both offline/admin and cart)
-    const activeRentals = await Rental.find({ status: RentalStatus.ACTIVE });
+    // Keep dashboard scope aligned with Rental Management page:
+    // exclude cart-origin rentals so counts/dues match offline rental operations.
+    const activeRentals = await Rental.find({
+      status: RentalStatus.ACTIVE,
+      order_source: { $ne: 'cart' }
+    });
+
+    const today = startOfDay(new Date());
+    const currentMonthKey = toMonthKey(today);
     
     // Calculate statistics
     let totalRentedItems = 0;
@@ -1450,7 +1545,8 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
           totalDeposits += Number(rental.total_deposit) || 0;
         }
 
-        // Payment records analysis
+        // Payment records analysis based on stored status values to keep
+        // dashboard behavior aligned with Rental Management view.
         const paymentRecords = rental.payment_records || [];
         
         paymentRecords.forEach((payment: any) => {
@@ -1462,7 +1558,11 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
 
             const month = String(payment.month);
             const amount = Number(payment.amount) || 0;
-            const paymentStatus = String(payment.status || PaymentStatus.PENDING);
+            const dueDate = payment.dueDate ? startOfDay(new Date(payment.dueDate)) : null;
+            const dueMonthKey = dueDate
+              ? toMonthKey(dueDate)
+              : (typeof payment.month === 'string' && /^\d{4}-\d{2}$/.test(payment.month) ? payment.month : '');
+            const effectiveStatus = getEffectivePaymentStatus(payment, today);
             
             // Monthly collection tracking
             if (!monthlyPayments[month]) {
@@ -1473,23 +1573,25 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
               };
             }
 
-            if (paymentStatus === PaymentStatus.PAID || paymentStatus === 'Paid') {
+            if (effectiveStatus === PaymentStatus.PAID) {
               monthlyPayments[month].total += amount;
               monthlyPayments[month].count += 1;
               totalPaidAmount += amount;
-            } else if (paymentStatus === PaymentStatus.PENDING || paymentStatus === 'Pending') {
+            } else if (effectiveStatus === PaymentStatus.PENDING) {
+              // Only show Pending for the current due month.
+              const shouldIncludePending = !dueMonthKey || dueMonthKey === currentMonthKey;
+              if (!shouldIncludePending) return;
+
               totalPendingAmount += amount;
-              
-              // Add to dues breakdown
               duesBreakdown.push({
                 rental_id: rental.rental_id || 'N/A',
                 customer_name: rental.customer_name || 'N/A',
                 customer_email: rental.customer_email || 'N/A',
                 customer_phone: rental.customer_phone || 'N/A',
-                month: month,
+                month: dueMonthKey || month,
                 amount: amount,
-                dueDate: payment.dueDate || new Date(),
-                status: 'Pending',
+                dueDate: dueDate || payment.dueDate || today,
+                status: PaymentStatus.PENDING,
                 items: (rental.items || []).map((item: any) => ({
                   product_name: item.product_name || 'N/A',
                   quantity: item.quantity || 1,
@@ -1497,24 +1599,24 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
                 })),
                 monthly_rent: rental.total_monthly_amount || 0
               });
-            } else if (paymentStatus === PaymentStatus.OVERDUE || paymentStatus === 'Overdue') {
+            } else if (effectiveStatus === PaymentStatus.OVERDUE) {
+              // Show all Overdue months (past due dates), regardless of due month.
               totalOverdueAmount += amount;
-              
-              // Add to dues breakdown
-              const dueDate = payment.dueDate ? new Date(payment.dueDate) : new Date();
+
+              const dueDateForCalc = dueDate || startOfDay(new Date(payment.dueDate || today));
               const daysOverdue = Math.floor(
-                (new Date().getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)
+                (today.getTime() - dueDateForCalc.getTime()) / (1000 * 60 * 60 * 24)
               );
-              
+
               duesBreakdown.push({
                 rental_id: rental.rental_id || 'N/A',
                 customer_name: rental.customer_name || 'N/A',
                 customer_email: rental.customer_email || 'N/A',
                 customer_phone: rental.customer_phone || 'N/A',
-                month: month,
+                month: dueMonthKey || month,
                 amount: amount,
-                dueDate: dueDate,
-                status: 'Overdue',
+                dueDate: dueDateForCalc,
+                status: PaymentStatus.OVERDUE,
                 daysOverdue,
                 items: (rental.items || []).map((item: any) => ({
                   product_name: item.product_name || 'N/A',
@@ -1677,23 +1779,57 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
     }
 
     const { status, month, customer_email } = req.query;
+    const requestedStatus = typeof status === 'string' ? status.toLowerCase() : 'all';
+    const statusFilter = ['all', 'pending', 'overdue'].includes(requestedStatus)
+      ? requestedStatus
+      : 'all';
 
-    const activeRentals = await Rental.find({ status: RentalStatus.ACTIVE });
+    const today = startOfDay(new Date());
+    const currentMonthKey = toMonthKey(today);
+    const requestedMonthKey =
+      typeof month === 'string' && /^\d{4}-\d{2}$/.test(month) ? month : null;
+
+    const activeRentals = await Rental.find({
+      status: RentalStatus.ACTIVE,
+      order_source: { $ne: 'cart' }
+    });
     const duesBreakdown: any[] = [];
 
     activeRentals.forEach(rental => {
       const paymentRecords = rental.payment_records || [];
       
       paymentRecords.forEach((payment: any) => {
-        if (payment.status === PaymentStatus.PENDING || payment.status === PaymentStatus.OVERDUE) {
+        const effectiveStatus = getEffectivePaymentStatus(payment, today);
+        const bucket =
+          effectiveStatus === PaymentStatus.PENDING
+            ? 'pending'
+            : effectiveStatus === PaymentStatus.OVERDUE
+              ? 'overdue'
+              : '';
+        if (bucket === 'pending' || bucket === 'overdue') {
           // Apply filters
-          if (status && payment.status !== status) return;
-          if (month && payment.month !== month) return;
+          if (statusFilter !== 'all' && statusFilter !== bucket) return;
           if (customer_email && rental.customer_email.toLowerCase() !== (customer_email as string).toLowerCase()) return;
 
-          const daysOverdue = payment.status === PaymentStatus.OVERDUE
-            ? Math.floor((new Date().getTime() - new Date(payment.dueDate).getTime()) / (1000 * 60 * 60 * 24))
-            : null;
+          const dueDate = payment.dueDate ? startOfDay(new Date(payment.dueDate)) : null;
+          const dueMonthKey =
+            dueDate
+              ? toMonthKey(dueDate)
+              : (typeof payment.month === 'string' && /^\d{4}-\d{2}$/.test(payment.month) ? payment.month : '');
+
+          // Default month behavior:
+          // - Pending: only current due month
+          // - Overdue: all due dates
+          if (bucket === 'pending') {
+            const pendingMonthKey = requestedMonthKey || currentMonthKey;
+            if (dueMonthKey && dueMonthKey !== pendingMonthKey) return;
+          }
+          if (requestedMonthKey && dueMonthKey && dueMonthKey !== requestedMonthKey) return;
+
+          const daysOverdue =
+            bucket === 'overdue' && dueDate
+              ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+              : null;
 
           duesBreakdown.push({
             rental_id: rental.rental_id,
@@ -1701,11 +1837,11 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
             customer_email: rental.customer_email,
             customer_phone: rental.customer_phone,
             customer_address: rental.customer_address,
-            month: payment.month,
-            month_name: new Date(payment.month + '-01').toLocaleString('default', { month: 'long', year: 'numeric' }),
+            month: dueMonthKey || payment.month,
+            month_name: new Date((dueMonthKey || payment.month) + '-01').toLocaleString('default', { month: 'long', year: 'numeric' }),
             amount: payment.amount,
-            dueDate: payment.dueDate,
-            status: payment.status,
+            dueDate: dueDate || payment.dueDate,
+            status: bucket === 'overdue' ? PaymentStatus.OVERDUE : PaymentStatus.PENDING,
             daysOverdue,
             items: rental.items.map((item: any) => ({
               product_name: item.product_name,
@@ -1730,13 +1866,69 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     });
 
+    const pendingDues = duesBreakdown.filter((d) => d.status === PaymentStatus.PENDING);
+    const overdueDues = duesBreakdown.filter((d) => d.status === PaymentStatus.OVERDUE);
+    const duesByCustomer: Record<string, any> = {};
+
+    duesBreakdown.forEach((due) => {
+      const key = due.customer_email || 'unknown';
+      if (!duesByCustomer[key]) {
+        duesByCustomer[key] = {
+          customer_name: due.customer_name || 'N/A',
+          customer_email: due.customer_email || 'N/A',
+          customer_phone: due.customer_phone || 'N/A',
+          rental_id: due.rental_id || 'N/A',
+          items: due.items || [],
+          monthly_rent: due.monthly_rent || 0,
+          pending_months: [],
+          overdue_months: [],
+          total_pending: 0,
+          total_overdue: 0,
+          total_due: 0
+        };
+      }
+
+      const amount = Number(due.amount) || 0;
+      if (due.status === PaymentStatus.PENDING) {
+        duesByCustomer[key].pending_months.push({
+          month: due.month,
+          amount,
+          dueDate: due.dueDate
+        });
+        duesByCustomer[key].total_pending += amount;
+      } else {
+        duesByCustomer[key].overdue_months.push({
+          month: due.month,
+          amount,
+          dueDate: due.dueDate,
+          daysOverdue: due.daysOverdue || 0
+        });
+        duesByCustomer[key].total_overdue += amount;
+      }
+
+      duesByCustomer[key].total_due =
+        duesByCustomer[key].total_pending + duesByCustomer[key].total_overdue;
+    });
+
+    const duesByCustomerArray = Object.values(duesByCustomer);
+
     res.status(200).json({
       success: true,
       data: {
+        filters: {
+          status: statusFilter,
+          month: month || null,
+          customer_email: customer_email || null,
+          available_statuses: ['all', 'pending', 'overdue']
+        },
         total_dues: duesBreakdown.length,
         total_amount: duesBreakdown.reduce((sum, d) => sum + d.amount, 0),
-        pending_count: duesBreakdown.filter(d => d.status === 'Pending').length,
-        overdue_count: duesBreakdown.filter(d => d.status === 'Overdue').length,
+        pending_count: pendingDues.length,
+        overdue_count: overdueDues.length,
+        by_customer: duesByCustomerArray,
+        all_dues: duesBreakdown,
+        pending_dues: pendingDues,
+        overdue_dues: overdueDues,
         dues: duesBreakdown
       }
     });
