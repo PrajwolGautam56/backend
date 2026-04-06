@@ -1794,6 +1794,12 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
       order_source: { $ne: 'cart' }
     });
     const duesBreakdown: any[] = [];
+    const requestedMonthStart = requestedMonthKey
+      ? new Date(`${requestedMonthKey}-01T00:00:00.000Z`)
+      : null;
+    const requestedMonthEnd = requestedMonthStart
+      ? new Date(Date.UTC(requestedMonthStart.getUTCFullYear(), requestedMonthStart.getUTCMonth() + 1, 0, 23, 59, 59, 999))
+      : null;
 
     activeRentals.forEach(rental => {
       const paymentRecords = rental.payment_records || [];
@@ -1856,6 +1862,87 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
           });
         }
       });
+
+      // If a specific month is requested, include projected due rows for rentals that
+      // don't yet have a payment record for that month (common for future months).
+      // This keeps the month-wise tracker useful without changing default dues behavior.
+      if (requestedMonthKey && requestedMonthStart && requestedMonthEnd) {
+        const hasRecordForRequestedMonth = paymentRecords.some((payment: any) => {
+          const dueDate = payment?.dueDate ? startOfDay(new Date(payment.dueDate)) : null;
+          const dueMonthKey = dueDate
+            ? toMonthKey(dueDate)
+            : (typeof payment?.month === 'string' && /^\d{4}-\d{2}$/.test(payment.month) ? payment.month : '');
+          return dueMonthKey === requestedMonthKey;
+        });
+
+        if (!hasRecordForRequestedMonth) {
+          const rentalStart = rental.start_date ? startOfDay(new Date(rental.start_date)) : null;
+          const rentalEnd = rental.end_date ? startOfDay(new Date(rental.end_date)) : null;
+
+          const isActiveInRequestedMonth =
+            !!rentalStart &&
+            rentalStart <= requestedMonthEnd &&
+            (!rentalEnd || rentalEnd >= requestedMonthStart);
+
+          if (isActiveInRequestedMonth) {
+            const dueDay = rentalStart!.getDate();
+            let projectedDueDate = new Date(Date.UTC(
+              requestedMonthStart.getUTCFullYear(),
+              requestedMonthStart.getUTCMonth(),
+              dueDay
+            ));
+            if (projectedDueDate.getUTCMonth() !== requestedMonthStart.getUTCMonth()) {
+              projectedDueDate = new Date(Date.UTC(
+                requestedMonthStart.getUTCFullYear(),
+                requestedMonthStart.getUTCMonth() + 1,
+                0
+              ));
+            }
+            const projectedDueDateLocal = startOfDay(projectedDueDate);
+            const projectedStatus =
+              projectedDueDateLocal < today ? PaymentStatus.OVERDUE : PaymentStatus.PENDING;
+            const projectedBucket =
+              projectedStatus === PaymentStatus.OVERDUE ? 'overdue' : 'pending';
+
+            if (statusFilter === 'all' || statusFilter === projectedBucket) {
+              if (!customer_email || rental.customer_email.toLowerCase() === (customer_email as string).toLowerCase()) {
+                const amount = Number(rental.total_monthly_amount) || 0;
+                if (amount > 0) {
+                  const daysOverdue =
+                    projectedStatus === PaymentStatus.OVERDUE
+                      ? Math.floor((today.getTime() - projectedDueDateLocal.getTime()) / (1000 * 60 * 60 * 24))
+                      : null;
+
+                  duesBreakdown.push({
+                    rental_id: rental.rental_id,
+                    customer_name: rental.customer_name,
+                    customer_email: rental.customer_email,
+                    customer_phone: rental.customer_phone,
+                    customer_address: rental.customer_address,
+                    month: requestedMonthKey,
+                    month_name: new Date(`${requestedMonthKey}-01`).toLocaleString('default', { month: 'long', year: 'numeric' }),
+                    amount,
+                    dueDate: projectedDueDateLocal,
+                    status: projectedStatus,
+                    daysOverdue,
+                    isProjected: true,
+                    items: rental.items.map((item: any) => ({
+                      product_name: item.product_name,
+                      product_type: item.product_type,
+                      quantity: item.quantity || 1,
+                      monthly_price: item.monthly_price,
+                      deposit: item.deposit || 0
+                    })),
+                    monthly_rent: rental.total_monthly_amount,
+                    rental_start_date: rental.start_date,
+                    rental_end_date: rental.end_date
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
     });
 
     // Sort: Overdue first, then by due date
