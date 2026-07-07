@@ -5,10 +5,26 @@ import ServiceBooking from '../models/ServiceBooking';
 import Furniture from '../models/Furniture';
 import Rental from '../models/Rental';
 import FurnitureTransaction from '../models/FurnitureTransaction';
+import Invoice from '../models/Invoice';
 import { AuthRequest } from '../interfaces/Request';
 import logger from '../utils/logger';
 import path from 'path';
 import fs from 'fs';
+
+const getInvoiceYearCode = (year: number) => String(year).slice(-3).padStart(3, '0');
+
+const getNextInvoiceSequence = async (year: number) => {
+  const latestInvoice = await Invoice.findOne({ invoice_year: year })
+    .sort({ sequence: -1 })
+    .select('sequence')
+    .lean();
+
+  return latestInvoice?.sequence ? latestInvoice.sequence + 1 : 101;
+};
+
+const buildInvoiceNumber = (year: number, sequence: number) => (
+  `${getInvoiceYearCode(year)}${sequence}`
+);
 
 export const addProperty = async (req: AuthRequest, res: Response) => {
   try {
@@ -1114,3 +1130,153 @@ export const getRentalAnalytics = async (req: AuthRequest, res: Response): Promi
     });
   }
 }; 
+
+export const getNextInvoiceNumber = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const invoiceYear = new Date().getFullYear();
+    const sequence = await getNextInvoiceSequence(invoiceYear);
+
+    res.json({
+      success: true,
+      data: {
+        invoice_number: buildInvoiceNumber(invoiceYear, sequence),
+        invoice_year: invoiceYear,
+        sequence
+      }
+    });
+  } catch (error: any) {
+    logger.error('Error getting next invoice number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting next invoice number',
+      error: error.message
+    });
+  }
+};
+
+export const getInvoices = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const invoices = await Invoice.find()
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    res.json({
+      success: true,
+      data: invoices
+    });
+  } catch (error: any) {
+    logger.error('Error fetching invoices:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching invoices',
+      error: error.message
+    });
+  }
+};
+
+export const createInvoice = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const {
+      invoice_date,
+      client_name,
+      client_address,
+      property_name,
+      items,
+      tax_percent = 18,
+      other_fees_label,
+      other_fees_amount = 0,
+      notes
+    } = req.body;
+
+    if (!client_name || !client_address || !property_name) {
+      res.status(400).json({
+        success: false,
+        message: 'Client name, client address, and property name are required'
+      });
+      return;
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'At least one invoice item is required'
+      });
+      return;
+    }
+
+    const normalizedItems = items
+      .map((item: any) => {
+        const rate = Number(item.rate) || 0;
+        const quantity = Number(item.quantity) || 1;
+
+        return {
+          description: String(item.description || '').trim(),
+          rate,
+          quantity,
+          amount: rate * quantity
+        };
+      })
+      .filter((item: any) => item.description && item.rate > 0 && item.quantity > 0);
+
+    if (normalizedItems.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Add at least one valid item with description and rate'
+      });
+      return;
+    }
+
+    const invoiceDate = invoice_date ? new Date(invoice_date) : new Date();
+    const invoiceYear = invoiceDate.getFullYear();
+    const subtotal = normalizedItems.reduce((sum: number, item: any) => sum + item.amount, 0);
+    const taxPercentNumber = Number(tax_percent) || 0;
+    const taxAmount = Math.round((subtotal * taxPercentNumber) / 100);
+    const otherFeesAmount = Number(other_fees_amount) || 0;
+    const grandTotal = subtotal + taxAmount + otherFeesAmount;
+
+    let invoice = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const sequence = await getNextInvoiceSequence(invoiceYear);
+      const invoiceNumber = buildInvoiceNumber(invoiceYear, sequence);
+
+      try {
+        invoice = await Invoice.create({
+          invoice_number: invoiceNumber,
+          invoice_year: invoiceYear,
+          sequence,
+          invoice_date: invoiceDate,
+          client_name,
+          client_address,
+          property_name,
+          items: normalizedItems,
+          subtotal,
+          tax_percent: taxPercentNumber,
+          tax_amount: taxAmount,
+          other_fees_label,
+          other_fees_amount: otherFeesAmount,
+          grand_total: grandTotal,
+          notes,
+          createdBy: req.userId
+        });
+        break;
+      } catch (error: any) {
+        if (error?.code !== 11000 || attempt === 2) {
+          throw error;
+        }
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      data: invoice
+    });
+  } catch (error: any) {
+    logger.error('Error creating invoice:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creating invoice',
+      error: error.message
+    });
+  }
+};

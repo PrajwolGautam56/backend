@@ -13,6 +13,11 @@ router.use(authenticateToken, isAdmin);
 // Dashboard
 router.get('/dashboard/overview', adminController.getDashboardOverview);
 
+// Invoices
+router.get('/invoices/next-number', adminController.getNextInvoiceNumber);
+router.get('/invoices', adminController.getInvoices);
+router.post('/invoices', adminController.createInvoice);
+
 // Settings
 router.get('/settings', adminController.getSettings);
 router.put('/settings', adminController.updateSettings);
