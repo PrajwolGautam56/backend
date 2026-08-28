@@ -128,7 +128,7 @@ export const createRental = async (req: AuthRequest, res: Response) => {
       sum + (item.monthly_price * (item.quantity || 1)), 0
     );
     const total_deposit = items.reduce((sum: number, item: any) => 
-      sum + (item.deposit || 0), 0
+      sum + ((item.deposit || 0) * (item.quantity || 1)), 0
     );
 
     // Link to user if email matches
@@ -869,9 +869,26 @@ export const updateRental = async (req: AuthRequest, res: Response) => {
         0
       );
       updateData.total_deposit = updateData.items.reduce(
-        (sum: number, item: any) => sum + (item.deposit || 0),
+        (sum: number, item: any) => sum + ((item.deposit || 0) * (item.quantity || 1)),
         0
       );
+
+      const monthlyAmountChanged =
+        Number(oldRental.total_monthly_amount || 0) !== Number(updateData.total_monthly_amount || 0);
+
+      if (monthlyAmountChanged && Array.isArray(oldRental.payment_records)) {
+        updateData.payment_records = oldRental.payment_records.map((payment: any) => {
+          const status = getEffectivePaymentStatus(payment, startOfDay(new Date()));
+          if (status === PaymentStatus.PAID) {
+            return payment;
+          }
+
+          return {
+            ...(payment.toObject?.() || payment),
+            amount: updateData.total_monthly_amount
+          };
+        });
+      }
     }
 
     // If email is updated, try to link to user
@@ -2491,4 +2508,3 @@ export const getOrderStatusStats = async (req: AuthRequest, res: Response) => {
     });
   }
 };
-
