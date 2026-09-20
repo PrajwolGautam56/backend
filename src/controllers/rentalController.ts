@@ -79,6 +79,10 @@ const getStoredPaymentStatus = (payment: any): 'paid' | 'pending' | 'overdue' | 
   return 'other';
 };
 
+const getRentalDueGroupKey = (due: any): string => {
+  return String(due.rental_id || due._id);
+};
+
 // Helper to link rental to user by email
 const linkRentalToUser = async (email: string): Promise<mongoose.Types.ObjectId | null> => {
   try {
@@ -1601,7 +1605,7 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
 
               totalPendingAmount += amount;
               duesBreakdown.push({
-                rental_id: rental.rental_id || 'N/A',
+                rental_id: rental.rental_id || String(rental._id),
                 customer_name: rental.customer_name || 'N/A',
                 customer_email: rental.customer_email || 'N/A',
                 customer_phone: rental.customer_phone || 'N/A',
@@ -1626,7 +1630,7 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
               );
 
               duesBreakdown.push({
-                rental_id: rental.rental_id || 'N/A',
+                rental_id: rental.rental_id || String(rental._id),
                 customer_name: rental.customer_name || 'N/A',
                 customer_email: rental.customer_email || 'N/A',
                 customer_phone: rental.customer_phone || 'N/A',
@@ -1667,9 +1671,10 @@ export const getRentalDashboard = async (req: AuthRequest, res: Response) => {
     const duesByCustomer: Record<string, any> = {};
     duesBreakdown.forEach(due => {
       try {
-        const key = due.customer_email || 'unknown';
+        const key = getRentalDueGroupKey(due);
         if (!duesByCustomer[key]) {
           duesByCustomer[key] = {
+            group_key: key,
             customer_name: due.customer_name || 'N/A',
             customer_email: due.customer_email || 'N/A',
             customer_phone: due.customer_phone || 'N/A',
@@ -1855,7 +1860,7 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
               : null;
 
           duesBreakdown.push({
-            rental_id: rental.rental_id,
+            rental_id: rental.rental_id || String(rental._id),
             customer_name: rental.customer_name,
             customer_email: rental.customer_email,
             customer_phone: rental.customer_phone,
@@ -1931,7 +1936,7 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
                       : null;
 
                   duesBreakdown.push({
-                    rental_id: rental.rental_id,
+                    rental_id: rental.rental_id || String(rental._id),
                     customer_name: rental.customer_name,
                     customer_email: rental.customer_email,
                     customer_phone: rental.customer_phone,
@@ -1975,9 +1980,10 @@ export const getDuesBreakdown = async (req: AuthRequest, res: Response) => {
     const duesByCustomer: Record<string, any> = {};
 
     duesBreakdown.forEach((due) => {
-      const key = due.customer_email || 'unknown';
+      const key = getRentalDueGroupKey(due);
       if (!duesByCustomer[key]) {
         duesByCustomer[key] = {
+          group_key: key,
           customer_name: due.customer_name || 'N/A',
           customer_email: due.customer_email || 'N/A',
           customer_phone: due.customer_phone || 'N/A',
@@ -2092,7 +2098,7 @@ export const getMonthlyCollection = async (req: AuthRequest, res: Response) => {
             const amount = Number(payment.amount) || 0;
             monthlyCollection[paymentMonth].total_collected += amount;
             monthlyCollection[paymentMonth].payments.push({
-              rental_id: rental.rental_id || 'N/A',
+              rental_id: rental.rental_id || String(rental._id),
               customer_name: rental.customer_name || 'N/A',
               customer_email: rental.customer_email || 'N/A',
               customer_phone: rental.customer_phone || 'N/A',
@@ -2106,8 +2112,8 @@ export const getMonthlyCollection = async (req: AuthRequest, res: Response) => {
               }))
             });
             
-            monthlyCollection[paymentMonth].customers_count.add(rental.customer_email || 'unknown');
-            monthlyCollection[paymentMonth].rentals_count.add(rental.rental_id || 'unknown');
+            monthlyCollection[paymentMonth].customers_count.add(getRentalDueGroupKey(rental));
+            monthlyCollection[paymentMonth].rentals_count.add(getRentalDueGroupKey(rental));
           }
         } catch (paymentError: any) {
           logger.warn('Error processing payment in monthly collection:', {
@@ -2184,7 +2190,7 @@ export const getMonthlyCollectionDetails = async (req: AuthRequest, res: Respons
           
           if ((paymentStatus === PaymentStatus.PAID || paymentStatus === 'Paid') && paymentMonth === month) {
             payments.push({
-              rental_id: rental.rental_id || 'N/A',
+              rental_id: rental.rental_id || String(rental._id),
               customer_name: rental.customer_name || 'N/A',
               customer_email: rental.customer_email || 'N/A',
               customer_phone: rental.customer_phone || 'N/A',
@@ -2233,7 +2239,7 @@ export const getMonthlyCollectionDetails = async (req: AuthRequest, res: Respons
         month_name: monthName,
         total_collected: totalCollected,
         payments_count: payments.length,
-        customers_count: new Set(payments.map(p => p.customer_email)).size,
+        customers_count: new Set(payments.map(p => p.rental_id)).size,
         rentals_count: new Set(payments.map(p => p.rental_id)).size,
         average_payment: payments.length > 0 ? totalCollected / payments.length : 0,
         payments: payments
