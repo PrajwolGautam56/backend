@@ -352,7 +352,10 @@ export const signin = async (req: Request, res: Response) => {
         fullName: user.fullName,
         username: user.username,
         email: user.email,
-        profilePicture: user.profilePicture
+        profilePicture: user.profilePicture,
+        role: user.role,
+        isAdmin: user.isAdmin,
+        isSuperAdmin: user.isSuperAdmin
       },
       token,
       refreshToken
@@ -568,4 +571,4 @@ export const verifyOtp = async (req: Request, res: Response) => {
     logger.error('Error verifying OTP', { error });
     return res.status(500).json({ message: 'Error verifying OTP' });
   }
-}; 
+};

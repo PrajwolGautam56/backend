@@ -5,6 +5,8 @@ import { isAdmin } from '../middleware/adminAuth';
 import { upload } from '../utils/fileUpload';
 import User from '../models/User'; 
 import { UserRole } from '../interfaces/User';
+import { AuthRequest } from '../interfaces/Request';
+import { canManageUser } from '../utils/adminPermissions';
 
 const router = express.Router();
 
@@ -39,7 +41,7 @@ router.delete('/properties/:id', adminController.deleteProperty);
 router.post('/properties/:id/discount', adminController.setDiscount);
 
 // Route to update user role
-router.patch('/update-role/:id', async (req, res) => {
+router.patch('/update-role/:id', async (req: AuthRequest, res) => {
   const { role } = req.body;
 
   if (!Object.values(UserRole).includes(role)) {
@@ -51,8 +53,14 @@ router.patch('/update-role/:id', async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+    const actor = await User.findById(req.userId);
+    if (!canManageUser(actor, user, true)) {
+      return res.status(403).json({ message: 'Only the super admin can manage administrator access. The super admin account is protected.' });
+    }
 
     user.role = role;
+    user.isAdmin = role === UserRole.ADMIN;
+    user.refreshToken = null;
     await user.save();
 
     return res.status(200).json({

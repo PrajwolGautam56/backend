@@ -16,6 +16,7 @@ export interface IUser extends Document {
   role: UserRole;
   refreshToken: string | null;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
   activityLog?: {
     action: string;
     timestamp: Date;
@@ -37,6 +38,7 @@ const UserSchema: Schema = new Schema({
   isVerified: { type: Boolean, default: false },
   refreshToken: { type: String, default: null },
   isAdmin: { type: Boolean, default: false },
+  isSuperAdmin: { type: Boolean, default: false },
   otp: { type: String },
   otpExpires: { type: Date },
   activityLog: [{

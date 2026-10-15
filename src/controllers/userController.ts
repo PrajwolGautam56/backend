@@ -10,6 +10,7 @@ import Furniture from '../models/Furniture';
 import Rental from '../models/Rental';
 import mongoose from 'mongoose';
 import logger from '../utils/logger';
+import { canManageUser } from '../utils/adminPermissions';
 
 // Admin: Get all users with filtering and pagination
 export const getUsers = async (req: AuthRequest, res: Response) => {
@@ -101,14 +102,30 @@ export const getUserById = async (req: AuthRequest, res: Response) => {
 export const updateUser = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const updateData = req.body;
+    const [actor, target] = await Promise.all([User.findById(req.userId), User.findById(id)]);
+    if (!target) return res.status(404).json({ message: 'User not found' });
+    const changesRole = Object.prototype.hasOwnProperty.call(req.body, 'role');
+    if (!canManageUser(actor, target, changesRole) || Object.prototype.hasOwnProperty.call(req.body, 'isSuperAdmin')) {
+      return res.status(403).json({ message: 'Only the super admin can manage administrator access. The super admin account is protected.' });
+    }
+    if (changesRole && !['USER', 'ADMIN'].includes(req.body.role)) {
+      return res.status(400).json({ message: 'Role must be USER or ADMIN' });
+    }
+    const updateData: Record<string, any> = {};
+    for (const field of ['fullName', 'username', 'email', 'phoneNumber', 'nationality', 'profilePicture', 'isVerified']) {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) updateData[field] = req.body[field];
+    }
+    if (target.isSuperAdmin) {
+      delete updateData.email;
+      delete updateData.isVerified;
+    }
+    if (changesRole) {
+      updateData.role = req.body.role;
+      updateData.isAdmin = req.body.role === 'ADMIN';
+      updateData.refreshToken = null;
+    }
 
-    // Don't allow updating sensitive fields directly
-    delete updateData.password;
-    delete updateData.refreshToken;
-    delete updateData.otp;
-
-    const user = await User.findByIdAndUpdate(id, updateData, { new: true })
+    const user = await User.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true })
       .select('-password -otp -otpExpires');
 
     if (!user) {
@@ -133,6 +150,11 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
+    const [actor, target] = await Promise.all([User.findById(req.userId), User.findById(id)]);
+    if (!target) return res.status(404).json({ message: 'User not found' });
+    if (!canManageUser(actor, target, false, true)) {
+      return res.status(403).json({ message: 'Only the super admin can delete admins. The super admin account cannot be deleted.' });
+    }
     const user = await User.findByIdAndDelete(id);
 
     if (!user) {
@@ -174,16 +196,14 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
 // User: Update own profile
 export const updateOwnProfile = async (req: AuthRequest, res: Response) => {
   try {
-    const updateData = req.body;
+    const target = await User.findById(req.userId);
+    const updateData: Record<string, any> = {};
+    for (const field of ['fullName', 'username', 'email', 'phoneNumber', 'nationality', 'profilePicture']) {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) updateData[field] = req.body[field];
+    }
+    if (target?.isSuperAdmin) delete updateData.email;
 
-    // Don't allow updating sensitive fields
-    delete updateData.password;
-    delete updateData.refreshToken;
-    delete updateData.isAdmin;
-    delete updateData.role;
-    delete updateData.isVerified;
-
-    const user = await User.findByIdAndUpdate(req.userId, updateData, { new: true })
+    const user = await User.findByIdAndUpdate(req.userId, { $set: updateData }, { new: true, runValidators: true })
       .select('-password -otp -otpExpires');
 
     if (!user) {
@@ -680,4 +700,3 @@ export const getUserDetails = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ message: 'Error fetching user details', error });
   }
 };
-
