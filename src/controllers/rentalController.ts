@@ -4,6 +4,7 @@ import { AuthRequest } from '../interfaces/Request';
 import User from '../models/User';
 import logger from '../utils/logger';
 import mongoose from 'mongoose';
+import { hasEmployeePermission } from '../utils/employeePermissions';
 import {
   sendRentalConfirmation,
   sendPaymentConfirmation,
@@ -892,6 +893,14 @@ export const updateRental = async (req: AuthRequest, res: Response) => {
             amount: updateData.total_monthly_amount
           };
         });
+      }
+    }
+
+    const actor = await User.findById(req.userId);
+    if (actor?.isEmployee && !hasEmployeePermission(actor, 'payments.update')) {
+      const changesPayment = Object.keys(updateData).some(key => key === 'payment_records' || key.startsWith('payment_records.'));
+      if (changesPayment || (updateData.total_monthly_amount !== undefined && Number(updateData.total_monthly_amount) !== Number(oldRental.total_monthly_amount))) {
+        return res.status(403).json({ message: 'Payment update permission is required to change payment records or monthly rent amounts.' });
       }
     }
 

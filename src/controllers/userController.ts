@@ -57,7 +57,7 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
     sortOptions[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
 
     const users = await User.find(query)
-      .select('-password -otp -otpExpires')
+      .select('-password -otp -otpExpires -refreshToken -resetPasswordToken -resetPasswordExpires')
       .sort(sortOptions)
       .skip(skip)
       .limit(limitNum);
@@ -82,7 +82,7 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
 export const getUserById = async (req: AuthRequest, res: Response) => {
   try {
     const user = await User.findById(req.params.id)
-      .select('-password -otp -otpExpires');
+      .select('-password -otp -otpExpires -refreshToken -resetPasswordToken -resetPasswordExpires');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -126,7 +126,7 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
     }
 
     const user = await User.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true })
-      .select('-password -otp -otpExpires');
+      .select('-password -otp -otpExpires -refreshToken -resetPasswordToken -resetPasswordExpires');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -177,7 +177,7 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
 export const getOwnProfile = async (req: AuthRequest, res: Response) => {
   try {
     const user = await User.findById(req.userId)
-      .select('-password -otp -otpExpires');
+      .select('-password -otp -otpExpires -refreshToken -resetPasswordToken -resetPasswordExpires');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -204,7 +204,7 @@ export const updateOwnProfile = async (req: AuthRequest, res: Response) => {
     if (target?.isSuperAdmin) delete updateData.email;
 
     const user = await User.findByIdAndUpdate(req.userId, { $set: updateData }, { new: true, runValidators: true })
-      .select('-password -otp -otpExpires');
+      .select('-password -otp -otpExpires -refreshToken -resetPasswordToken -resetPasswordExpires');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });

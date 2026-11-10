@@ -26,6 +26,7 @@ import wishlistRoutes from './routes/wishlistRoutes';
 import reviewRoutes from './routes/reviewRoutes';
 import promoCodeRoutes from './routes/promoCodeRoutes';
 import orderRoutes from './routes/orderRoutes';
+import { employeeAccess } from './middleware/employeeAccess';
 import cron from 'node-cron';
 import { checkAndSendPaymentReminders } from './utils/rentalReminders';
 import { checkMonthlyRentalPayments } from './utils/monthlyPaymentChecker';
@@ -91,6 +92,7 @@ app.use((_req, _res, next) => {
 });
 
 // Routes
+app.use('/api', employeeAccess);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/services', serviceRoutes);

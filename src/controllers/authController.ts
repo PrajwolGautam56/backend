@@ -323,6 +323,8 @@ export const signin = async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    if (user.isEmployee && user.employeeActive === false) return res.status(403).json({ message: 'Employee access is disabled.' });
+
     // Require verified account before allowing login
     if (!user.isVerified) {
       return res.status(403).json({ message: 'Please verify your email with the OTP before logging in.' });
@@ -355,7 +357,10 @@ export const signin = async (req: Request, res: Response) => {
         profilePicture: user.profilePicture,
         role: user.role,
         isAdmin: user.isAdmin,
-        isSuperAdmin: user.isSuperAdmin
+        isSuperAdmin: user.isSuperAdmin,
+        isEmployee: user.isEmployee,
+        employeeActive: user.employeeActive,
+        permissions: user.permissions
       },
       token,
       refreshToken
@@ -443,6 +448,7 @@ export const googleAuth = async (req: Request, res: Response) => {
     user.refreshToken = refreshToken;
     await user.save();
 
+    if (user.isEmployee && user.employeeActive === false) return res.status(403).json({ message: 'Employee access is disabled.' });
     logger.info('Google authentication successful', { email: payload.email });
 
     return res.status(200).json({ 
@@ -453,7 +459,12 @@ export const googleAuth = async (req: Request, res: Response) => {
         fullName: user.fullName,
         username: user.username,
         email: user.email,
-        profilePicture: user.profilePicture
+        profilePicture: user.profilePicture,
+        role: user.role,
+        isSuperAdmin: user.isSuperAdmin,
+        isEmployee: user.isEmployee,
+        employeeActive: user.employeeActive,
+        permissions: user.permissions
       }
     });
   } catch (error: any) {

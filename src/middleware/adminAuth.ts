@@ -20,7 +20,7 @@ export const isAdmin = async (
       return res.status(404).json({ message: 'User not found' });
     }
 
-    if (user.role !== UserRole.ADMIN) {
+    if (user.role !== UserRole.ADMIN || (user.isEmployee && user.employeeActive === false)) {
       logger.warn('Unauthorized admin access attempt', { userId: req.userId });
       return res.status(403).json({ message: 'Admin access required' });
     }
@@ -30,4 +30,4 @@ export const isAdmin = async (
     logger.error('Error in admin authentication:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
-}; 
+};

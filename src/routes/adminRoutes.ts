@@ -7,10 +7,16 @@ import User from '../models/User';
 import { UserRole } from '../interfaces/User';
 import { AuthRequest } from '../interfaces/Request';
 import { canManageUser } from '../utils/adminPermissions';
+import { requireSuperAdmin, getEmployeePermissions, getEmployees, saveEmployee } from '../controllers/employeeController';
 
 const router = express.Router();
 
 router.use(authenticateToken, isAdmin);
+
+router.get('/employee-permissions', requireSuperAdmin, getEmployeePermissions);
+router.get('/employees', requireSuperAdmin, getEmployees);
+router.post('/employees', requireSuperAdmin, saveEmployee);
+router.put('/employees/:id', requireSuperAdmin, saveEmployee);
 
 // Dashboard
 router.get('/dashboard/overview', adminController.getDashboardOverview);

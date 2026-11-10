@@ -19,6 +19,9 @@ export interface IUser extends Document {
   comparePassword(candidatePassword: string): Promise<boolean>;
   isAdmin: boolean;
   isSuperAdmin: boolean;
+  isEmployee: boolean;
+  employeeActive: boolean;
+  permissions: string[];
   otp?: string; // Field to store OTP
   otpExpires?: Date;
   resetPasswordToken?: string | null;
