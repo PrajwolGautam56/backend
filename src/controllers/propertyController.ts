@@ -10,72 +10,19 @@ import mongoose, { Schema } from 'mongoose'; // Ensure mongoose is imported
 import cloudinary from '../utils/cloudinary';
 import { config } from '../config/config';
 import { geocodeAddress } from '../utils/geocoding';
+import { buildPropertySearch } from '../utils/propertySearch';
 
 // Public endpoints
 export const getProperties = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
-    const query: any = {};
-    
-    // Sanitize and validate query parameters
-    if (req.query.propertyType && ['Residential', 'Commercial', 'PG Hostel'].includes(req.query.propertyType as string)) {
-      query.property_type = req.query.propertyType;
-    }
-    if (req.query.listingType && ['Rent', 'Sell'].includes(req.query.listingType as string)) {
-      query.listing_type = req.query.listingType;
-    }
-    if (req.query.city) {
-      query['address.city'] = new RegExp(req.query.city as string, 'i');
-    }
-    
-    // Additional filters
-    if (req.query.bhk) {
-      query.bhk = parseInt(req.query.bhk as string);
-    }
-    if (req.query.bedrooms) {
-      query.bedrooms = parseInt(req.query.bedrooms as string);
-    }
-    if (req.query.bathrooms) {
-      query.bathrooms = parseInt(req.query.bathrooms as string);
-    }
-    if (req.query.building_type && ['Apartment', 'Villa', 'Independent House', 'Pent House', 'Plot'].includes(req.query.building_type as string)) {
-      query.building_type = req.query.building_type;
-    }
-    if (req.query.furnishing && ['Full', 'Semi', 'None'].includes(req.query.furnishing as string)) {
-      query.furnishing = req.query.furnishing;
-    }
-    if (req.query.parking && ['Public', 'Reserved', 'Covered'].includes(req.query.parking as string)) {
-      query.parking = req.query.parking;
-    }
-    if (req.query.status && ['Available', 'Sold'].includes(req.query.status as string)) {
-      query.status = req.query.status;
-    }
-
-    // Validate price filters for both rent and sell
-    const minPrice = Number(req.query.minPrice);
-    const maxPrice = Number(req.query.maxPrice);
-    if (!isNaN(minPrice) || !isNaN(maxPrice)) {
-      query.$or = [
-        { 'price.rent_monthly': { $gte: minPrice || 0, $lte: maxPrice || Number.MAX_SAFE_INTEGER } },
-        { 'price.sell_price': { $gte: minPrice || 0, $lte: maxPrice || Number.MAX_SAFE_INTEGER } }
-      ];
-    }
-
-    // Use native MongoDB to avoid model validation
+    const { query, page, limit, sort } = buildPropertySearch(req.query);
     const db = mongoose.connection.db;
     const propertiesCollection = db.collection('properties');
     const total = await propertiesCollection.countDocuments(query);
-    
-    // Get sort order from query (default: newest first)
-    const sortBy = req.query.sortBy as string || '-createdAt';
-    
-    const sortDirection = sortBy.startsWith('-') ? -1 : 1;
-    const sortField = sortBy.replace(/^-/, '');
     const properties = await propertiesCollection.find(query)
+      .sort(sort)
       .skip((page - 1) * limit)
       .limit(limit)
-      .sort({ [sortField]: sortDirection })
       .toArray();
     
     // Populate added_by if needed (simplified - just return user ID for now)

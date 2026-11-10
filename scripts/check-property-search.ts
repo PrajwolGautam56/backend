@@ -1,0 +1,20 @@
+import assert from 'assert';
+import { buildPropertySearch } from '../src/utils/propertySearch';
+
+const rent = buildPropertySearch({ listingType: 'Rent', location: 'HSR (Layout)', minPrice: '10000', maxPrice: '30000', page: '2', limit: '12', bhk: '5', sortBy: 'price-low' });
+assert.strictEqual(rent.page, 2);
+assert.strictEqual(rent.limit, 12);
+assert.strictEqual(rent.query.listing_type, 'Rent');
+assert.deepStrictEqual(rent.query.bhk, { $gte: 5 });
+assert.strictEqual(rent.query['price.rent_monthly'].$gte, 10000);
+assert.strictEqual(rent.query['price.sell_price'], undefined);
+assert.strictEqual(rent.query.$and[0].$or[0].location.test('HSR (Layout)'), true);
+assert.strictEqual(rent.query.$and[0].$or[0].location.test('HSR Layout'), false);
+assert.deepStrictEqual(rent.sort, { 'price.rent_monthly': 1, _id: -1 });
+const buy = buildPropertySearch({ listingType: 'Sell', minPrice: '5000000', sortBy: 'price-high' });
+assert.strictEqual(buy.query['price.sell_price'].$gte, 5000000);
+assert.strictEqual(buy.query['price.rent_monthly'], undefined);
+assert.strictEqual(buildPropertySearch({ limit: '999999', page: '-1' }).limit, 100);
+assert.strictEqual(buildPropertySearch({ limit: '999999', page: '-1' }).page, 1);
+assert.deepStrictEqual(buildPropertySearch({ sortBy: 'password' }).sort, { createdAt: -1, _id: -1 });
+console.log('Property search checks passed: pagination, rent/buy price fields, safe locality search, 5+ BHK and sort validation.');
