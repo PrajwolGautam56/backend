@@ -8,6 +8,7 @@ import { UserRole } from '../interfaces/User';
 import { AuthRequest } from '../interfaces/Request';
 import { canManageUser } from '../utils/adminPermissions';
 import { requireSuperAdmin, getEmployeePermissions, getEmployees, saveEmployee } from '../controllers/employeeController';
+import { getCompanyProfile, updateCompanyProfile, uploadLeaderPhoto } from '../controllers/companyProfileController';
 
 const router = express.Router();
 
@@ -31,6 +32,9 @@ router.get('/settings', adminController.getSettings);
 router.put('/settings', adminController.updateSettings);
 router.post('/settings/test-email', adminController.testEmail);
 router.post('/settings/test-payment', adminController.testPayment);
+router.get('/company-profile', getCompanyProfile);
+router.put('/company-profile', updateCompanyProfile);
+router.post('/company-profile/photo', upload.single('profilePicture'), uploadLeaderPhoto);
 
 // Analytics
 router.get('/analytics/revenue', adminController.getRevenueAnalytics);

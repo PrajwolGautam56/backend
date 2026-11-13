@@ -26,6 +26,7 @@ import wishlistRoutes from './routes/wishlistRoutes';
 import reviewRoutes from './routes/reviewRoutes';
 import promoCodeRoutes from './routes/promoCodeRoutes';
 import orderRoutes from './routes/orderRoutes';
+import companyProfileRoutes from './routes/companyProfileRoutes';
 import { employeeAccess } from './middleware/employeeAccess';
 import cron from 'node-cron';
 import { checkAndSendPaymentReminders } from './utils/rentalReminders';
@@ -81,6 +82,7 @@ app.use(rateLimit({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use('/uploads', express.static('uploads'));
 
 // Logging middleware (move before routes)
 app.use((_req, _res, next) => {
@@ -112,6 +114,7 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/promo-codes', promoCodeRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/company-profile', companyProfileRoutes);
 
 // Swagger Documentation with custom options
 app.use('/api-docs', swaggerUi.serve);
